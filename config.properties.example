@@ -17,6 +17,23 @@
 # NEVER commit config.properties to Git (it's in .gitignore).
 # ============================================================
 
-claude.api.key=YOUR_ANTHROPIC_KEY_HERE
-openai.api.key=YOUR_OPENAI_KEY_HERE
-gemini.api.key=YOUR_GEMINI_KEY_HERE
+# --- API Keys (paste your real keys here) ---
+claude.key=YOUR_CLAUDE_KEY_HERE
+openai.key=YOUR_OPENAI_KEY_HERE
+gemini.key=YOUR_GEMINI_KEY_HERE
+
+# --- Model Names (defaults are fine, change if you need a different model) ---
+claude.model=claude-sonnet-4-20250514
+openai.model=gpt-4o
+gemini.model=gemini-2.5-flash
+
+# --- Tuning Parameters ---
+# Maximum tokens each model can return per API call
+max.response.tokens=8192
+
+# How many rounds of cross-reaction in Phase 2 (1 = standard, 2+ = deeper debate)
+debate.rounds=1
+
+# Max characters of conversation history to include in prompts
+# Prevents prompts from growing too large. ~4 chars per token.
+max.history.chars=24000

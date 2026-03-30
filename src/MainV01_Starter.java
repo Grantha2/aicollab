@@ -1,5 +1,10 @@
 // ============================================================
-// Main.java — Your first AI API call
+// DEPRECATED — This was the v0.1 starter code (single Claude call).
+// Kept for reference only. DO NOT RUN OR MODIFY THIS FILE.
+// The active code is in src/main/java/collab/.
+// ============================================================
+//
+// MainV01_Starter.java — Your first AI API call (archived)
 // ============================================================
 //
 // WHAT THIS FILE DOES:

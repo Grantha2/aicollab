@@ -21,6 +21,13 @@ config.properties
 bin/
 *.class
 
+# Maven build output (compiled classes, packaged jars, etc.)
+target/
+
+# IntelliJ IDEA project files
+.idea/
+*.iml
+
 # OS-generated files
 .DS_Store
 Thumbs.db

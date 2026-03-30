@@ -1,28 +1,35 @@
 package aicollab;
 
 // ============================================================
-// Main.java — AI Collaboration Platform v0.3
+// DEPRECATED — This file is the old v0.3 monolith, kept for
+// reference only. DO NOT RUN OR MODIFY THIS FILE.
+//
+// The active code is in src/main/java/collab/ (11 files).
+// Run collab.Main instead.
 // ============================================================
 //
-// WHAT THIS FILE DOES:
-// 1. Asks you to type a question
-// 2. Sends it to Claude, GPT, and Gemini independently
-// 3. Each model reacts to the other two models' responses
-// 4. Claude synthesizes everything into a structured report
+// MainV03_Monolith.java — AI Collaboration Platform v0.3 (archived)
+// ============================================================
 //
-// This is the complete debate cycle in one file.
-// No frameworks, no libraries, no magic.
+// This was the original single-file version of the platform.
+// All 1,080+ lines lived in one file: API calls, prompt building,
+// debate orchestration, CLI loop, and stakeholder profiles.
 //
-// HOW TO RUN:
-//   1. javac src/aicollab/Main.java
-//   2. java -cp src aicollab.Main
-//   3. On first run, the program will ask for your API keys
-//      and save them locally (they won't be asked again).
+// It was refactored into separate classes in v0.4:
+//   collab.Main.java          — CLI loop (the front door)
+//   collab.Orchestrator.java  — 3-phase debate (the brain)
+//   collab.LlmClient.java     — interface for all AI models
+//   collab.AnthropicClient.java, OpenAiClient.java, GeminiClient.java
+//   collab.PromptBuilder.java — onion-layered prompt construction
+//   collab.AgentProfile.java  — AI agent identities
+//   collab.StakeholderProfile.java — team member profiles
+//   collab.ConversationContext.java — session memory
+//   collab.Config.java        — API key management
 //
-// PREREQUISITES:
-//   - Java 21 installed
-//   - API keys for Anthropic, OpenAI, and Google Gemini
-//     (the program will tell you where to get them)
+// WHY WE KEPT THIS FILE:
+// So the team can see where the code came from. Compare this
+// monolith to the refactored version to understand WHY we split
+// it up and HOW each piece maps to its new home.
 // ============================================================
 
 
@@ -60,12 +67,12 @@ public class Main {
     // --- ANTHROPIC (Claude) ---
     private static final String CLAUDE_URL = "https://api.anthropic.com/v1/messages";
     private static final String CLAUDE_KEY;  // loaded from config.properties
-    private static final String CLAUDE_MODEL = "claude-sonnet-4-20250514";
+    private static final String CLAUDE_MODEL = "claude-opus-4-6";
 
     // --- OPENAI (GPT) ---
     private static final String OPENAI_URL = "https://api.openai.com/v1/chat/completions";
     private static final String OPENAI_KEY;  // loaded from config.properties
-    private static final String OPENAI_MODEL = "gpt-4o";
+    private static final String OPENAI_MODEL = "gpt-5.4-mini";
 
     // --- GOOGLE (Gemini) ---
     // NOTE: Gemini is different — the API key goes in the URL, not in a header.
@@ -73,7 +80,7 @@ public class Main {
     private static final String GEMINI_KEY;  // loaded from config.properties
     // "gemini-2.0-flash" was retired for new users in 2026.
     // "gemini-2.5-flash" is the current stable text model.
-    private static final String GEMINI_MODEL = "gemini-2.5-flash";
+    private static final String GEMINI_MODEL = "gemini-3.1-pro-preview";
 
     // ============================================================
     // CONFIGURATION LOADING
@@ -942,7 +949,7 @@ public class Main {
         String requestBody = """
                 {
                     "model": "%s",
-                    "max_tokens": 1024,
+                    "max_tokens": 8192,
                     "messages": [
                         {
                             "role": "user",
@@ -999,7 +1006,7 @@ public class Main {
         String requestBody = """
                 {
                     "model": "%s",
-                    "max_completion_tokens": 1024,
+                    "max_completion_tokens": 4096,
                     "messages": [
                         {
                             "role": "user",

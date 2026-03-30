@@ -1,0 +1,225 @@
+package collab;
+
+// ============================================================
+// AnthropicClient.java — Claude API calls (implements LlmClient).
+//
+// WHAT THIS CLASS DOES (one sentence):
+// Sends a prompt to Anthropic's Claude API and returns the text response.
+//
+// HOW IT FITS THE ARCHITECTURE:
+// This is one of three LlmClient implementations. Orchestrator calls
+// sendMessage() without knowing which provider is behind it. This class
+// handles the Anthropic-specific details: URL, headers, JSON format,
+// and response parsing.
+//
+// UNIQUE ANTHROPIC DETAILS:
+//   - Auth header: "x-api-key" (not "Authorization: Bearer ...")
+//   - Requires an extra header: "anthropic-version: 2023-06-01"
+//   - Request JSON uses "messages" array with "role" + "content"
+//   - Response path: content[0].text
+//
+// LEARN BY PATTERN:
+// This class follows the exact same structure as OpenAiClient and
+// GeminiClient: constructor stores config, sendMessage() builds JSON,
+// sends HTTP, extracts the response. Reading one teaches you all three.
+// The differences are small and highlighted in comments.
+// ============================================================
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+
+public class AnthropicClient implements LlmClient {
+
+    // These are set once in the constructor and never change.
+    // 'final' means Java won't let you accidentally reassign them.
+    private final HttpClient httpClient;
+    private final String apiUrl;
+    private final String apiKey;
+    private final String modelName;
+    private final int maxTokens;
+
+    // ============================================================
+    // Constructor — stores everything needed to make API calls.
+    //
+    // PARAMETERS:
+    //   httpClient — shared HTTP client (created once in Main, reused
+    //                by all three providers to save resources)
+    //   apiUrl     — Anthropic's API endpoint
+    //   apiKey     — your Anthropic API key (loaded from Config)
+    //   modelName  — which Claude model to use (e.g., "claude-sonnet-4-20250514")
+    //   maxTokens  — maximum tokens in Claude's response
+    // ============================================================
+    public AnthropicClient(HttpClient httpClient, String apiUrl,
+                           String apiKey, String modelName, int maxTokens) {
+        this.httpClient = httpClient;
+        this.apiUrl = apiUrl;
+        this.apiKey = apiKey;
+        this.modelName = modelName;
+        this.maxTokens = maxTokens;
+    }
+
+    // ============================================================
+    // sendMessage() — Implements the LlmClient interface.
+    //
+    // Three steps (same pattern as every API client):
+    //   1. Build the JSON request body
+    //   2. Build and send the HTTP request with provider-specific headers
+    //   3. Extract the text from the JSON response
+    //
+    // If anything goes wrong (network error, bad key, rate limit),
+    // returns an error string instead of crashing. This lets the
+    // debate continue even if one model fails.
+    // ============================================================
+    @Override
+    public String sendMessage(String prompt) {
+
+        String escapedPrompt = escapeForJson(prompt);
+
+        // Anthropic's JSON format: "messages" array with "role" and "content".
+        // This is very similar to OpenAI's format — not a coincidence;
+        // OpenAI popularized it and others adopted the pattern.
+        String requestBody = """
+                {
+                    "model": "%s",
+                    "max_tokens": %d,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "%s"
+                        }
+                    ]
+                }
+                """.formatted(modelName, maxTokens, escapedPrompt);
+
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(apiUrl))
+                    .header("Content-Type", "application/json")
+                    // ANTHROPIC-SPECIFIC: Uses "x-api-key" header (not Bearer token).
+                    // This is Anthropic's custom auth scheme.
+                    .header("x-api-key", apiKey)
+                    // ANTHROPIC-SPECIFIC: Required version header. Without this,
+                    // the API rejects the request.
+                    .header("anthropic-version", "2023-06-01")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request,
+                    HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                return "[Claude ERROR " + response.statusCode() + "] " + response.body();
+            }
+
+            // Claude's response JSON structure:
+            // { "content": [{ "type": "text", "text": "the actual answer" }] }
+            // We want the value of the "text" field.
+            return extractField(response.body(), "text");
+
+        } catch (Exception e) {
+            return "[Claude ERROR] " + e.getMessage();
+        }
+    }
+
+
+    // ============================================================
+    // escapeForJson() — Makes user input safe to embed in JSON.
+    //
+    // WHY THIS IS NECESSARY:
+    // JSON uses double quotes to wrap strings. If the user types:
+    //   He said "hello"
+    // And we naively insert that into JSON, it becomes:
+    //   { "content": "He said "hello"" }
+    //                          ^ JSON breaks here
+    //
+    // ORDER MATTERS: We escape backslashes FIRST because the other
+    // replacements ADD backslashes. If we did backslashes last,
+    // we'd double-escape the ones we just added.
+    //
+    // NOTE: This method is duplicated in all three client classes.
+    // That's intentional — it keeps each client self-contained and
+    // readable without jumping between files. We can extract a
+    // shared JsonUtil.java later when the team is comfortable.
+    // ============================================================
+    private static String escapeForJson(String input) {
+        return input
+                .replace("\\", "\\\\")   // backslash -> \\  (must be first!)
+                .replace("\"", "\\\"")   // double quote -> \"
+                .replace("\n", "\\n")    // newline -> \n
+                .replace("\r", "\\r")    // carriage return -> \r
+                .replace("\t", "\\t");   // tab -> \t
+    }
+
+
+    // ============================================================
+    // extractField() — Pulls a specific value from JSON by field name.
+    //
+    // HOW IT WORKS:
+    //   1. Search for the pattern  "fieldName": "
+    //   2. Everything after that opening quote until the next
+    //      unescaped quote is our value.
+    //
+    // WHY lastIndexOf:
+    // Some APIs include the field name multiple times in the response.
+    // The LAST occurrence is typically the actual answer. So we
+    // search from the end of the string backward.
+    //
+    // LIMITATION: Won't work for nested objects or arrays. Fine for
+    // now — all three APIs put the answer in a simple string field.
+    // When we add Gson later, this goes away.
+    //
+    // NOTE: Duplicated in all three clients. See escapeForJson note.
+    // ============================================================
+    private static String extractField(String json, String fieldName) {
+
+        String marker = "\"" + fieldName + "\": \"";
+        String markerAlt = "\"" + fieldName + "\":\"";
+
+        int startIndex = json.lastIndexOf(marker);
+        int markerLength = marker.length();
+
+        if (startIndex == -1) {
+            startIndex = json.lastIndexOf(markerAlt);
+            markerLength = markerAlt.length();
+        }
+
+        if (startIndex == -1) {
+            return "[PARSE ERROR] Could not find field '" + fieldName
+                    + "' in response.\nRaw: " + json;
+        }
+
+        startIndex += markerLength;
+
+        // Find the closing quote, handling escaped quotes.
+        // A quote preceded by an odd number of backslashes is escaped
+        // (part of the value). An even number means it's the real end.
+        int endIndex = startIndex;
+        while (endIndex < json.length()) {
+            char current = json.charAt(endIndex);
+
+            if (current == '"') {
+                int backslashCount = 0;
+                int checkIndex = endIndex - 1;
+                while (checkIndex >= startIndex && json.charAt(checkIndex) == '\\') {
+                    backslashCount++;
+                    checkIndex--;
+                }
+                if (backslashCount % 2 == 0) {
+                    break;
+                }
+            }
+            endIndex++;
+        }
+
+        // Extract and unescape the JSON string
+        String extracted = json.substring(startIndex, endIndex);
+        extracted = extracted.replace("\\n", "\n");
+        extracted = extracted.replace("\\t", "\t");
+        extracted = extracted.replace("\\\"", "\"");
+        extracted = extracted.replace("\\\\", "\\");
+
+        return extracted;
+    }
+}

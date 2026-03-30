@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    pom.xml - Maven Project Configuration
+
+    WHAT THIS FILE DOES:
+    Maven is Java's standard build tool. This file tells Maven:
+      1. What Java version we need (21)
+      2. What libraries (dependencies) to download
+      3. How to compile and package the project
+
+    HOW TO USE:
+      mvn compile          - compiles all .java files
+      mvn exec:java        - compiles and runs Main
+      mvn clean            - deletes compiled files (target/ folder)
+
+    WHY MAVEN:
+    Before Maven, you'd manually download .jar files and manage classpaths.
+    Maven handles all of that automatically. You declare what you need here,
+    and Maven fetches it from the internet.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- PROJECT IDENTITY — how Maven identifies this project -->
+    <groupId>com.aicollab</groupId>
+    <artifactId>ai-collab</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>AI Collaboration Platform</name>
+    <description>Multi-model AI debate platform for university team collaboration</description>
+
+    <properties>
+        <!-- Java 21 — we use features like text blocks (triple-quote strings) -->
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <dependencies>
+        <!--
+            Gson — Google's JSON library for Java.
+
+            WHY IT'S HERE BUT NOT USED YET:
+            Our API clients currently use manual JSON construction (escapeForJson)
+            and string-based parsing (extractField). That works but is brittle.
+            Gson is declared here so it's available when the team is ready to
+            upgrade the JSON handling. "No features before foundation" — get the
+            refactor clean first, then improve parsing later.
+
+            WHAT GSON DOES:
+            Converts Java objects to JSON strings and back. Instead of manually
+            building {"key": "value"} strings, you'd create a Java object and
+            call gson.toJson(object). Much safer, no escaping needed.
+        -->
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.11.0</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                Maven Compiler Plugin — tells Maven to use Java 21.
+                Without this, Maven might default to an older Java version.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <source>21</source>
+                    <target>21</target>
+                </configuration>
+            </plugin>
+
+            <!--
+                Exec Maven Plugin — lets you run the program with "mvn exec:java".
+                It knows to run collab.Main as the entry point.
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.1.0</version>
+                <configuration>
+                    <mainClass>collab.Main</mainClass>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

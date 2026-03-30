@@ -1,0 +1,173 @@
+package collab;
+
+// ============================================================
+// OpenAiClient.java — GPT API calls (implements LlmClient).
+//
+// WHAT THIS CLASS DOES (one sentence):
+// Sends a prompt to OpenAI's GPT API and returns the text response.
+//
+// HOW IT FITS THE ARCHITECTURE:
+// Same role as AnthropicClient — one of three LlmClient implementations.
+// Orchestrator calls sendMessage() without knowing this is GPT.
+//
+// HOW GPT DIFFERS FROM CLAUDE:
+//   - Auth: "Authorization: Bearer ..." header (industry standard OAuth pattern)
+//   - Token limit field: "max_completion_tokens" (not "max_tokens" — OpenAI
+//     renamed this for newer models like gpt-4o)
+//   - Response path: choices[0].message.content
+//   - The response JSON contains "content" MULTIPLE TIMES (once in the
+//     request echo, once in the actual answer). We use lastIndexOf to
+//     grab the last one, which is the answer.
+//   - Request JSON is nearly identical to Claude — both use "messages"
+//     with "role" and "content". This isn't a coincidence; OpenAI
+//     popularized this format and others adopted it.
+//
+// LEARN BY PATTERN:
+// Compare this file to AnthropicClient.java line by line. Same structure,
+// small differences. The comments highlight exactly what's different.
+// ============================================================
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+
+public class OpenAiClient implements LlmClient {
+
+    private final HttpClient httpClient;
+    private final String apiUrl;
+    private final String apiKey;
+    private final String modelName;
+    private final int maxTokens;
+
+    // ============================================================
+    // Constructor — same pattern as AnthropicClient.
+    // Stores config, reuses the shared HttpClient.
+    // ============================================================
+    public OpenAiClient(HttpClient httpClient, String apiUrl,
+                        String apiKey, String modelName, int maxTokens) {
+        this.httpClient = httpClient;
+        this.apiUrl = apiUrl;
+        this.apiKey = apiKey;
+        this.modelName = modelName;
+        this.maxTokens = maxTokens;
+    }
+
+    // ============================================================
+    // sendMessage() — Same three-step pattern as AnthropicClient:
+    //   1. Build JSON  2. Send HTTP  3. Extract response
+    // Differences are highlighted with "OPENAI-SPECIFIC" comments.
+    // ============================================================
+    @Override
+    public String sendMessage(String prompt) {
+
+        String escapedPrompt = escapeForJson(prompt);
+
+        // Almost identical JSON to Claude. "messages" array with "role"
+        // and "content" — same pattern, different provider.
+        // OPENAI-SPECIFIC: Uses "max_completion_tokens" instead of "max_tokens".
+        // OpenAI renamed this field for newer models like gpt-4o.
+        String requestBody = """
+                {
+                    "model": "%s",
+                    "max_completion_tokens": %d,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "%s"
+                        }
+                    ]
+                }
+                """.formatted(modelName, maxTokens, escapedPrompt);
+
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(apiUrl))
+                    .header("Content-Type", "application/json")
+                    // OPENAI-SPECIFIC: Uses "Authorization: Bearer ..." header.
+                    // This is the industry-standard OAuth pattern, different from
+                    // Anthropic's custom "x-api-key" header.
+                    .header("Authorization", "Bearer " + apiKey)
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request,
+                    HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                return "[GPT ERROR " + response.statusCode() + "] " + response.body();
+            }
+
+            // GPT's response JSON structure:
+            // { "choices": [{ "message": { "content": "the actual answer" } }] }
+            //
+            // OPENAI-SPECIFIC: The word "content" appears MULTIPLE times in the
+            // response — once in the request echo section and once in the actual
+            // answer. extractField uses lastIndexOf() to grab the LAST occurrence,
+            // which is the answer we want.
+            return extractField(response.body(), "content");
+
+        } catch (Exception e) {
+            return "[GPT ERROR] " + e.getMessage();
+        }
+    }
+
+
+    // --- Utility methods (duplicated for self-containment — see AnthropicClient for full comments) ---
+
+    private static String escapeForJson(String input) {
+        return input
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
+
+    private static String extractField(String json, String fieldName) {
+
+        String marker = "\"" + fieldName + "\": \"";
+        String markerAlt = "\"" + fieldName + "\":\"";
+
+        int startIndex = json.lastIndexOf(marker);
+        int markerLength = marker.length();
+
+        if (startIndex == -1) {
+            startIndex = json.lastIndexOf(markerAlt);
+            markerLength = markerAlt.length();
+        }
+
+        if (startIndex == -1) {
+            return "[PARSE ERROR] Could not find field '" + fieldName
+                    + "' in response.\nRaw: " + json;
+        }
+
+        startIndex += markerLength;
+
+        int endIndex = startIndex;
+        while (endIndex < json.length()) {
+            char current = json.charAt(endIndex);
+
+            if (current == '"') {
+                int backslashCount = 0;
+                int checkIndex = endIndex - 1;
+                while (checkIndex >= startIndex && json.charAt(checkIndex) == '\\') {
+                    backslashCount++;
+                    checkIndex--;
+                }
+                if (backslashCount % 2 == 0) {
+                    break;
+                }
+            }
+            endIndex++;
+        }
+
+        String extracted = json.substring(startIndex, endIndex);
+        extracted = extracted.replace("\\n", "\n");
+        extracted = extracted.replace("\\t", "\t");
+        extracted = extracted.replace("\\\"", "\"");
+        extracted = extracted.replace("\\\\", "\\");
+
+        return extracted;
+    }
+}
