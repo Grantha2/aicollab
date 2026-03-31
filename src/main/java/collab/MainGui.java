@@ -92,24 +92,26 @@ public class MainGui extends JFrame implements DebateListener {
                 wrap("Gemini", geminiScroll));
         topSplit.setResizeWeight(0.67);
 
-        promptArea = new JTextArea();
-        promptArea.setLineWrap(true);
-        promptArea.setWrapStyleWord(true);
-
         synthesisArea = new JTextArea();
         synthesisArea.setEditable(false);
         synthesisArea.setLineWrap(true);
         synthesisArea.setWrapStyleWord(true);
 
-        JSplitPane bottomSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
-                wrap("Prompt", new JScrollPane(promptArea)),
+        JSplitPane mainVerticalSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
+                topSplit,
                 wrap("Synthesis", new JScrollPane(synthesisArea)));
-        bottomSplit.setResizeWeight(0.5);
-
-        JSplitPane mainVerticalSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, topSplit, bottomSplit);
         mainVerticalSplit.setResizeWeight(0.62);
 
+        promptArea = new JTextArea();
+        promptArea.setLineWrap(true);
+        promptArea.setWrapStyleWord(true);
+        JScrollPane promptScroll = new JScrollPane(promptArea);
+        promptScroll.setPreferredSize(new Dimension(0, 180));
+        JPanel promptDock = wrap("Prompt (always visible)", promptScroll);
+        promptDock.setPreferredSize(new Dimension(0, 200));
+
         panel.add(mainVerticalSplit, BorderLayout.CENTER);
+        panel.add(promptDock, BorderLayout.SOUTH);
         return panel;
     }
 
