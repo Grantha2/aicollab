@@ -14,9 +14,12 @@ public class MainGui extends JFrame implements DebateListener {
 
     private JComboBox<String> stakeholderCombo;
     private JComboBox<String> profileCombo;
-    private JTextArea claudeArea;
-    private JTextArea gptArea;
-    private JTextArea geminiArea;
+    private JPanel claudeStream;
+    private JPanel gptStream;
+    private JPanel geminiStream;
+    private JScrollPane claudeScroll;
+    private JScrollPane gptScroll;
+    private JScrollPane geminiScroll;
     private JTextArea promptArea;
     private JTextArea synthesisArea;
     private JLabel statusLabel;
@@ -29,7 +32,7 @@ public class MainGui extends JFrame implements DebateListener {
         add(buildToolbar(), BorderLayout.NORTH);
         add(buildMainPanel(), BorderLayout.CENTER);
         add(buildStatusBar(), BorderLayout.SOUTH);
-        setSize(1200, 800);
+        setSize(1300, 850);
         initApplication();
     }
 
@@ -43,8 +46,12 @@ public class MainGui extends JFrame implements DebateListener {
         JMenuItem selectProfile = new JMenuItem("Select Profile Set...");
         selectProfile.addActionListener(e -> onSelectProfileSet());
 
+        JMenuItem createProfile = new JMenuItem("Create Profile Set...");
+        createProfile.addActionListener(e -> onCreateProfileSet());
+
         settingsMenu.add(editConfig);
         settingsMenu.add(selectProfile);
+        settingsMenu.add(createProfile);
         menuBar.add(settingsMenu);
         return menuBar;
     }
@@ -68,24 +75,48 @@ public class MainGui extends JFrame implements DebateListener {
     private JComponent buildMainPanel() {
         JPanel panel = new JPanel(new BorderLayout(8, 8));
 
-        claudeArea = createReadOnlyArea();
-        gptArea = createReadOnlyArea();
-        geminiArea = createReadOnlyArea();
+        claudeStream = createStreamPanel();
+        gptStream = createStreamPanel();
+        geminiStream = createStreamPanel();
+        claudeScroll = new JScrollPane(claudeStream);
+        gptScroll = new JScrollPane(gptStream);
+        geminiScroll = new JScrollPane(geminiStream);
 
-        JPanel top = new JPanel(new GridLayout(1, 3, 8, 8));
-        top.add(wrap("Claude", claudeArea));
-        top.add(wrap("GPT", gptArea));
-        top.add(wrap("Gemini", geminiArea));
+        JSplitPane leftMidSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
+                wrap("Claude", claudeScroll),
+                wrap("GPT", gptScroll));
+        leftMidSplit.setResizeWeight(0.5);
+
+        JSplitPane topSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
+                leftMidSplit,
+                wrap("Gemini", geminiScroll));
+        topSplit.setResizeWeight(0.67);
 
         promptArea = new JTextArea();
-        synthesisArea = createReadOnlyArea();
-        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
+        promptArea.setLineWrap(true);
+        promptArea.setWrapStyleWord(true);
+
+        synthesisArea = new JTextArea();
+        synthesisArea.setEditable(false);
+        synthesisArea.setLineWrap(true);
+        synthesisArea.setWrapStyleWord(true);
+
+        JSplitPane bottomSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
                 wrap("Prompt", new JScrollPane(promptArea)),
                 wrap("Synthesis", new JScrollPane(synthesisArea)));
-        splitPane.setResizeWeight(0.45);
+        bottomSplit.setResizeWeight(0.5);
 
-        panel.add(top, BorderLayout.CENTER);
-        panel.add(splitPane, BorderLayout.SOUTH);
+        JSplitPane mainVerticalSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, topSplit, bottomSplit);
+        mainVerticalSplit.setResizeWeight(0.62);
+
+        panel.add(mainVerticalSplit, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private JPanel createStreamPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setBackground(Color.WHITE);
         return panel;
     }
 
@@ -96,23 +127,11 @@ public class MainGui extends JFrame implements DebateListener {
         return panel;
     }
 
-    private JPanel wrap(String title, JTextArea area) {
-        return wrap(title, new JScrollPane(area));
-    }
-
     private JPanel wrap(String title, JComponent component) {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBorder(BorderFactory.createTitledBorder(title));
         panel.add(component, BorderLayout.CENTER);
         return panel;
-    }
-
-    private JTextArea createReadOnlyArea() {
-        JTextArea area = new JTextArea();
-        area.setEditable(false);
-        area.setLineWrap(true);
-        area.setWrapStyleWord(true);
-        return area;
     }
 
     private void initApplication() {
@@ -227,6 +246,28 @@ public class MainGui extends JFrame implements DebateListener {
         }
     }
 
+    private void onCreateProfileSet() {
+        ProfileSetEditorDialog dialog = new ProfileSetEditorDialog(this, activeProfileSet);
+        dialog.setVisible(true);
+        ProfileSet newSet = dialog.getProfileSet();
+        if (newSet == null) {
+            return;
+        }
+        try {
+            profileLibrary.saveSet(newSet, newSet.getName());
+            activeProfileSet = profileLibrary.loadSet(newSet.getName());
+            refreshProfileCombo();
+            rebuildStakeholderCombo();
+            rebuildOrchestrator();
+            statusLabel.setText("Created and loaded profile set: " + newSet.getName());
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this,
+                    "Unable to save profile set: " + e.getMessage(),
+                    "Profile Save Error",
+                    JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     private void onRunDebate() {
         if (orchestrator == null || activeProfileSet == null) {
             return;
@@ -242,9 +283,9 @@ public class MainGui extends JFrame implements DebateListener {
             return;
         }
 
-        claudeArea.setText("");
-        gptArea.setText("");
-        geminiArea.setText("");
+        clearStream(claudeStream);
+        clearStream(gptStream);
+        clearStream(geminiStream);
         synthesisArea.setText("");
 
         new SwingWorker<Void, Void>() {
@@ -258,14 +299,20 @@ public class MainGui extends JFrame implements DebateListener {
 
     @Override
     public void onPhase1Response(String model, String perspective, String response) {
-        SwingUtilities.invokeLater(() -> appendToModelArea(model,
-                "[Phase 1 — " + perspective + "]\n" + response + "\n\n"));
+        SwingUtilities.invokeLater(() -> appendCard(model,
+                "Phase 1 — " + perspective,
+                response,
+                colorForPhase(model, 0),
+                false));
     }
 
     @Override
     public void onPhase2Reaction(int round, String model, String perspective, String reaction) {
-        SwingUtilities.invokeLater(() -> appendToModelArea(model,
-                "[Phase 2 Round " + round + " — " + perspective + "]\n" + reaction + "\n\n"));
+        SwingUtilities.invokeLater(() -> appendCard(model,
+                "Phase 2 Round " + round + " — " + perspective,
+                reaction,
+                colorForPhase(model, round),
+                false));
     }
 
     @Override
@@ -275,19 +322,128 @@ public class MainGui extends JFrame implements DebateListener {
 
     @Override
     public void onStatusUpdate(String message) {
-        SwingUtilities.invokeLater(() -> statusLabel.setText(message));
+        SwingUtilities.invokeLater(() -> {
+            statusLabel.setText(message);
+            maybeAppendApiCallBadge(message);
+        });
     }
 
-    private void appendToModelArea(String model, String text) {
-        JTextArea target = switch (model) {
-            case "Claude" -> claudeArea;
-            case "GPT" -> gptArea;
-            case "Gemini" -> geminiArea;
+    private void maybeAppendApiCallBadge(String message) {
+        if (message == null) {
+            return;
+        }
+        if (message.contains("Claude")) {
+            appendCard("Claude", "API Call", message, tint(Color.ORANGE, 0.9), true);
+        } else if (message.contains("GPT")) {
+            appendCard("GPT", "API Call", message, tint(Color.DARK_GRAY, 0.92), true);
+        } else if (message.contains("Gemini")) {
+            appendCard("Gemini", "API Call", message, tint(new Color(66, 133, 244), 0.9), true);
+        }
+    }
+
+    private void clearStream(JPanel panel) {
+        panel.removeAll();
+        panel.revalidate();
+        panel.repaint();
+    }
+
+    private void appendCard(String model, String title, String body, Color bg, boolean compact) {
+        JPanel stream = streamForModel(model);
+        JScrollPane scroll = scrollForModel(model);
+        if (stream == null || scroll == null) {
+            return;
+        }
+
+        JPanel card = new JPanel(new BorderLayout(6, 6));
+        card.setBackground(bg);
+        card.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(darker(bg), 1),
+                BorderFactory.createEmptyBorder(8, 8, 8, 8)));
+
+        JLabel header = new JLabel(title);
+        header.setFont(header.getFont().deriveFont(Font.BOLD));
+        header.setForeground(textColor(bg));
+
+        JTextArea content = new JTextArea(body);
+        content.setEditable(false);
+        content.setLineWrap(true);
+        content.setWrapStyleWord(true);
+        content.setOpaque(false);
+        content.setForeground(textColor(bg));
+        content.setFont(compact ? content.getFont().deriveFont(11f) : content.getFont());
+
+        card.add(header, BorderLayout.NORTH);
+        card.add(content, BorderLayout.CENTER);
+        card.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        stream.add(card);
+        stream.add(Box.createVerticalStrut(8));
+        stream.revalidate();
+        stream.repaint();
+
+        SwingUtilities.invokeLater(() -> {
+            JScrollBar bar = scroll.getVerticalScrollBar();
+            bar.setValue(bar.getMaximum());
+        });
+    }
+
+    private JPanel streamForModel(String model) {
+        return switch (model) {
+            case "Claude" -> claudeStream;
+            case "GPT" -> gptStream;
+            case "Gemini" -> geminiStream;
             default -> null;
         };
-        if (target != null) {
-            target.append(text);
-        }
+    }
+
+    private JScrollPane scrollForModel(String model) {
+        return switch (model) {
+            case "Claude" -> claudeScroll;
+            case "GPT" -> gptScroll;
+            case "Gemini" -> geminiScroll;
+            default -> null;
+        };
+    }
+
+    private Color colorForPhase(String model, int round) {
+        return switch (model) {
+            case "Claude" -> gradient(new Color(255, 175, 80), round, 5);
+            case "GPT" -> gradient(new Color(120, 120, 120), round, 5);
+            case "Gemini" -> {
+                Color[] rgb = {new Color(66, 133, 244), new Color(234, 67, 53), new Color(52, 168, 83)};
+                Color base = rgb[round % rgb.length];
+                yield gradient(base, round, 6);
+            }
+            default -> Color.WHITE;
+        };
+    }
+
+    private Color gradient(Color base, int round, int maxRound) {
+        float factor = Math.min(round, maxRound) / (float) maxRound;
+        int r = (int) (base.getRed() + (255 - base.getRed()) * factor * 0.55f);
+        int g = (int) (base.getGreen() + (255 - base.getGreen()) * factor * 0.55f);
+        int b = (int) (base.getBlue() + (255 - base.getBlue()) * factor * 0.55f);
+        return new Color(clamp(r), clamp(g), clamp(b));
+    }
+
+    private Color tint(Color base, double amountToWhite) {
+        int r = (int) (base.getRed() + (255 - base.getRed()) * amountToWhite);
+        int g = (int) (base.getGreen() + (255 - base.getGreen()) * amountToWhite);
+        int b = (int) (base.getBlue() + (255 - base.getBlue()) * amountToWhite);
+        return new Color(clamp(r), clamp(g), clamp(b));
+    }
+
+    private Color darker(Color c) {
+        return new Color(clamp((int) (c.getRed() * 0.7)), clamp((int) (c.getGreen() * 0.7)), clamp((int) (c.getBlue() * 0.7)));
+    }
+
+    private Color textColor(Color bg) {
+        int luminance = (int) (0.299 * bg.getRed() + 0.587 * bg.getGreen() + 0.114 * bg.getBlue());
+        return luminance < 140 ? Color.WHITE : Color.BLACK;
+    }
+
+    private int clamp(int value) {
+        return Math.max(0, Math.min(255, value));
     }
 
     public static void launch() {
