@@ -58,6 +58,7 @@ public class Orchestrator {
 
     // Stores synthesis reports so the panel has memory across cycles.
     private final ConversationContext context;
+    private final int configuredMaxTokens;
     private final SessionStore sessionStore;
 
     // How many rounds of cross-reaction in Phase 2.
@@ -75,7 +76,7 @@ public class Orchestrator {
     public Orchestrator(LlmClient claudeClient, LlmClient gptClient, LlmClient geminiClient,
                         AgentProfile claudeAgent, AgentProfile gptAgent, AgentProfile geminiAgent,
                         PromptBuilder promptBuilder, ConversationContext context,
-                        int debateRounds, SessionStore sessionStore) {
+                        int debateRounds, int configuredMaxTokens, SessionStore sessionStore) {
         this.claudeClient = claudeClient;
         this.gptClient = gptClient;
         this.geminiClient = geminiClient;
@@ -85,6 +86,7 @@ public class Orchestrator {
         this.promptBuilder = promptBuilder;
         this.context = context;
         this.debateRounds = debateRounds;
+        this.configuredMaxTokens = configuredMaxTokens;
         this.sessionStore = sessionStore;
     }
 
