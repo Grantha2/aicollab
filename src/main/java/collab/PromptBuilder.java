@@ -69,6 +69,18 @@ public class PromptBuilder {
         return "=== STAKEHOLDER'S QUESTION ===\n" + userPrompt;
     }
 
+    public String buildSynthesisSystemInstruction(StakeholderProfile stakeholder) {
+        return TEAM_CONTEXT
+             + "=== ORCHESTRATOR ROLE ===\n"
+             + "You are the panel ORCHESTRATOR for Phase 3 synthesis.\n"
+             + "You are not speaking as Claude's Strategy & Risk persona.\n"
+             + "Your job is to neutrally mediate across all panel viewpoints,\n"
+             + "surface convergence and conflict, and produce a balanced\n"
+             + "stakeholder-tailored recommendation grounded in the full debate.\n\n"
+             + stakeholder.toBriefing()
+             + context.getHistoryBlock();
+    }
+
     public String buildPeerReactionsUserMessage(String userPrompt,
                                                 String peerAName, String peerAResponse,
                                                 String peerBName, String peerBResponse) {

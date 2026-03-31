@@ -266,9 +266,10 @@ public class Orchestrator {
                 claudeResponse, gptResponse, geminiResponse,
                 latestClaude, latestGpt, latestGemini
         );
+        String synthesisSystemInstruction = promptBuilder.buildSynthesisSystemInstruction(activeStakeholder);
 
         String synthesis = claudeClient.sendMessage(new LlmRequest(
-                claudeSystemInstruction,
+                synthesisSystemInstruction,
                 List.of(
                         new ChatMessage("user", phase1UserMessage),
                         new ChatMessage("assistant", claudeResponse),
