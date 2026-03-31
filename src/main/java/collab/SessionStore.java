@@ -171,12 +171,31 @@ public class SessionStore {
     }
 
     private static String unescapeJsonString(String input) {
-        return input
-                .replace("\\t", "\t")
-                .replace("\\r", "\r")
-                .replace("\\n", "\n")
-                .replace("\\\"", "\"")
-                .replace("\\\\", "\\");
+        StringBuilder out = new StringBuilder(input.length());
+        int i = 0;
+        while (i < input.length()) {
+            char ch = input.charAt(i);
+            if (ch != '\\' || i + 1 >= input.length()) {
+                out.append(ch);
+                i++;
+                continue;
+            }
+
+            char next = input.charAt(i + 1);
+            switch (next) {
+                case 't' -> out.append('\t');
+                case 'r' -> out.append('\r');
+                case 'n' -> out.append('\n');
+                case '"' -> out.append('"');
+                case '\\' -> out.append('\\');
+                default -> {
+                    out.append('\\');
+                    out.append(next);
+                }
+            }
+            i += 2;
+        }
+        return out.toString();
     }
 
     private static String extractJsonString(String json, String fieldName) {
