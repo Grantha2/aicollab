@@ -113,7 +113,7 @@ public class Main {
                 claudeClient, gptClient, geminiClient,
                 claudeAgent, gptAgent, geminiAgent,
                 promptBuilder, context,
-                config.getDebateRounds());
+                config.getDebateRounds(), maxTokens);
 
         // ==========================
         // STEP 8: RUN THE CLI LOOP

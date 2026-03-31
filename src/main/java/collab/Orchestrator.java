@@ -1,5 +1,7 @@
 package collab;
 
+import java.util.List;
+
 // ============================================================
 // Orchestrator.java — Runs the 3-phase debate cycle.
 //
@@ -63,6 +65,7 @@ public class Orchestrator {
     // 1 round = standard (each model reacts once to the other two).
     // 2+ rounds = deeper debate (reactions build on previous reactions).
     private final int debateRounds;
+    private final int configuredMaxTokens;
 
     // ============================================================
     // Constructor — wires together all the pieces.
@@ -74,7 +77,7 @@ public class Orchestrator {
     public Orchestrator(LlmClient claudeClient, LlmClient gptClient, LlmClient geminiClient,
                         AgentProfile claudeAgent, AgentProfile gptAgent, AgentProfile geminiAgent,
                         PromptBuilder promptBuilder, ConversationContext context,
-                        int debateRounds) {
+                        int debateRounds, int configuredMaxTokens) {
         this.claudeClient = claudeClient;
         this.gptClient = gptClient;
         this.geminiClient = geminiClient;
@@ -84,6 +87,7 @@ public class Orchestrator {
         this.promptBuilder = promptBuilder;
         this.context = context;
         this.debateRounds = debateRounds;
+        this.configuredMaxTokens = configuredMaxTokens;
     }
 
     // ============================================================
@@ -112,18 +116,28 @@ public class Orchestrator {
         System.out.println("\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d");
 
         System.out.println("\n[Calling Claude (Strategy & Risk)...]");
-        String claudeResponse = claudeClient.sendMessage(
-                promptBuilder.buildPhase1Prompt(claudeAgent, activeStakeholder, userPrompt));
+        String claudeSystemInstruction = promptBuilder.buildSystemInstruction(claudeAgent, activeStakeholder);
+        String phase1UserMessage = promptBuilder.buildPhase1UserMessage(userPrompt);
+        String claudeResponse = claudeClient.sendMessage(new LlmRequest(
+                claudeSystemInstruction,
+                List.of(new ChatMessage("user", phase1UserMessage)),
+                configuredMaxTokens));
         System.out.println("Claude responded. \u2713");
 
         System.out.println("\n[Calling GPT (Innovation & Opportunity)...]");
-        String gptResponse = gptClient.sendMessage(
-                promptBuilder.buildPhase1Prompt(gptAgent, activeStakeholder, userPrompt));
+        String gptSystemInstruction = promptBuilder.buildSystemInstruction(gptAgent, activeStakeholder);
+        String gptResponse = gptClient.sendMessage(new LlmRequest(
+                gptSystemInstruction,
+                List.of(new ChatMessage("user", phase1UserMessage)),
+                configuredMaxTokens));
         System.out.println("GPT responded. \u2713");
 
         System.out.println("\n[Calling Gemini (Technical Feasibility)...]");
-        String geminiResponse = geminiClient.sendMessage(
-                promptBuilder.buildPhase1Prompt(geminiAgent, activeStakeholder, userPrompt));
+        String geminiSystemInstruction = promptBuilder.buildSystemInstruction(geminiAgent, activeStakeholder);
+        String geminiResponse = geminiClient.sendMessage(new LlmRequest(
+                geminiSystemInstruction,
+                List.of(new ChatMessage("user", phase1UserMessage)),
+                configuredMaxTokens));
         System.out.println("Gemini responded. \u2713");
 
         // Print Phase 1 results so the user can see what each model said
@@ -154,6 +168,8 @@ public class Orchestrator {
         String latestClaude = claudeResponse;
         String latestGpt = gptResponse;
         String latestGemini = geminiResponse;
+        String lastClaudePeerMessage = promptBuilder.buildPeerReactionsUserMessage(
+                userPrompt, "GPT", latestGpt, "Gemini", latestGemini);
 
         for (int round = 1; round <= debateRounds; round++) {
 
@@ -174,21 +190,43 @@ public class Orchestrator {
             // In round 2+, "latest" = previous round's reactions.
 
             System.out.println("\n[Claude reacting to GPT and Gemini...]");
-            String claudeReaction = claudeClient.sendMessage(
-                    promptBuilder.buildReactionPrompt(claudeAgent, activeStakeholder,
-                            userPrompt, "GPT", latestGpt, "Gemini", latestGemini));
+            String claudePeerMessage = promptBuilder.buildPeerReactionsUserMessage(
+                    userPrompt, "GPT", latestGpt, "Gemini", latestGemini);
+            lastClaudePeerMessage = claudePeerMessage;
+            String claudeReaction = claudeClient.sendMessage(new LlmRequest(
+                    claudeSystemInstruction,
+                    List.of(
+                            new ChatMessage("user", phase1UserMessage),
+                            new ChatMessage("assistant", latestClaude),
+                            new ChatMessage("user", claudePeerMessage)
+                    ),
+                    configuredMaxTokens));
             System.out.println("Claude reacted. \u2713");
 
             System.out.println("\n[GPT reacting to Claude and Gemini...]");
-            String gptReaction = gptClient.sendMessage(
-                    promptBuilder.buildReactionPrompt(gptAgent, activeStakeholder,
-                            userPrompt, "Claude", latestClaude, "Gemini", latestGemini));
+            String gptPeerMessage = promptBuilder.buildPeerReactionsUserMessage(
+                    userPrompt, "Claude", latestClaude, "Gemini", latestGemini);
+            String gptReaction = gptClient.sendMessage(new LlmRequest(
+                    gptSystemInstruction,
+                    List.of(
+                            new ChatMessage("user", phase1UserMessage),
+                            new ChatMessage("assistant", latestGpt),
+                            new ChatMessage("user", gptPeerMessage)
+                    ),
+                    configuredMaxTokens));
             System.out.println("GPT reacted. \u2713");
 
             System.out.println("\n[Gemini reacting to Claude and GPT...]");
-            String geminiReaction = geminiClient.sendMessage(
-                    promptBuilder.buildReactionPrompt(geminiAgent, activeStakeholder,
-                            userPrompt, "Claude", latestClaude, "GPT", latestGpt));
+            String geminiPeerMessage = promptBuilder.buildPeerReactionsUserMessage(
+                    userPrompt, "Claude", latestClaude, "GPT", latestGpt);
+            String geminiReaction = geminiClient.sendMessage(new LlmRequest(
+                    geminiSystemInstruction,
+                    List.of(
+                            new ChatMessage("user", phase1UserMessage),
+                            new ChatMessage("assistant", latestGemini),
+                            new ChatMessage("user", geminiPeerMessage)
+                    ),
+                    configuredMaxTokens));
             System.out.println("Gemini reacted. \u2713");
 
             // Print this round's reactions
@@ -222,14 +260,23 @@ public class Orchestrator {
         System.out.println("\u2551   PHASE 3: Synthesis Report           \u2551");
         System.out.println("\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d");
 
-        String synthesisPrompt = promptBuilder.buildSynthesisPrompt(
-                activeStakeholder, userPrompt,
+        System.out.println("\n[Claude synthesizing all perspectives...]");
+        String synthesisPayload = promptBuilder.buildSynthesisPayload(
+                userPrompt,
                 claudeResponse, gptResponse, geminiResponse,
                 latestClaude, latestGpt, latestGemini
         );
 
-        System.out.println("\n[Claude synthesizing all perspectives...]");
-        String synthesis = claudeClient.sendMessage(synthesisPrompt);
+        String synthesis = claudeClient.sendMessage(new LlmRequest(
+                claudeSystemInstruction,
+                List.of(
+                        new ChatMessage("user", phase1UserMessage),
+                        new ChatMessage("assistant", claudeResponse),
+                        new ChatMessage("user", lastClaudePeerMessage),
+                        new ChatMessage("assistant", latestClaude),
+                        new ChatMessage("user", synthesisPayload)
+                ),
+                configuredMaxTokens));
 
         System.out.println("\n" + synthesis);
 
