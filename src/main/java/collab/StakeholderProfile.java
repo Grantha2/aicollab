@@ -28,13 +28,15 @@ public class StakeholderProfile {
     // Each field maps to one line in the formatted briefing.
     // These match the original STAKEHOLDER_PROFILES array in the
     // old Main.java — same data, now in a proper class.
-    private final String name;
-    private final String role;
-    private final String focusArea;
-    private final String worksWith;
-    private final String responsibilities;
-    private final String evaluatedOn;
-    private final String background;
+    private String name;
+    private String role;
+    private String focusArea;
+    private String worksWith;
+    private String responsibilities;
+    private String evaluatedOn;
+    private String background;
+
+    StakeholderProfile() {}
 
     public StakeholderProfile(String name, String role, String focusArea,
                               String worksWith, String responsibilities,
@@ -53,6 +55,8 @@ public class StakeholderProfile {
     public String getFocusArea()        { return focusArea; }
     public String getResponsibilities() { return responsibilities; }
     public String getEvaluatedOn()      { return evaluatedOn; }
+    public String getWorksWith()        { return worksWith; }
+    public String getBackground()       { return background; }
 
     // ============================================================
     // toBriefing() — Formats this profile as a prompt-ready text block.
