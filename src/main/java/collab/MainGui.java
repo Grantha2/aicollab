@@ -1,10 +1,6 @@
 package collab;
 
 import javax.swing.*;
-import javax.swing.text.BadLocationException;
-import javax.swing.text.SimpleAttributeSet;
-import javax.swing.text.StyleConstants;
-import javax.swing.text.StyledDocument;
 import java.awt.*;
 import java.net.http.HttpClient;
 import java.util.List;
@@ -18,9 +14,9 @@ public class MainGui extends JFrame implements DebateListener {
 
     private JComboBox<String> stakeholderCombo;
     private JComboBox<String> profileCombo;
-    private JTextPane claudePane;
-    private JTextPane gptPane;
-    private JTextPane geminiPane;
+    private JTextArea claudeArea;
+    private JTextArea gptArea;
+    private JTextArea geminiArea;
     private JTextArea promptArea;
     private JTextArea synthesisArea;
     private JLabel statusLabel;
@@ -33,7 +29,7 @@ public class MainGui extends JFrame implements DebateListener {
         add(buildToolbar(), BorderLayout.NORTH);
         add(buildMainPanel(), BorderLayout.CENTER);
         add(buildStatusBar(), BorderLayout.SOUTH);
-        setSize(1300, 850);
+        setSize(1200, 800);
         initApplication();
     }
 
@@ -47,12 +43,8 @@ public class MainGui extends JFrame implements DebateListener {
         JMenuItem selectProfile = new JMenuItem("Select Profile Set...");
         selectProfile.addActionListener(e -> onSelectProfileSet());
 
-        JMenuItem createProfile = new JMenuItem("Create Profile Set...");
-        createProfile.addActionListener(e -> onCreateProfileSet());
-
         settingsMenu.add(editConfig);
         settingsMenu.add(selectProfile);
-        settingsMenu.add(createProfile);
         menuBar.add(settingsMenu);
         return menuBar;
     }
@@ -76,38 +68,24 @@ public class MainGui extends JFrame implements DebateListener {
     private JComponent buildMainPanel() {
         JPanel panel = new JPanel(new BorderLayout(8, 8));
 
-        claudePane = createReadOnlyPane();
-        gptPane = createReadOnlyPane();
-        geminiPane = createReadOnlyPane();
+        claudeArea = createReadOnlyArea();
+        gptArea = createReadOnlyArea();
+        geminiArea = createReadOnlyArea();
 
-        JSplitPane leftMidSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
-                wrap("Claude", new JScrollPane(claudePane)),
-                wrap("GPT", new JScrollPane(gptPane)));
-        leftMidSplit.setResizeWeight(0.5);
-
-        JSplitPane topSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
-                leftMidSplit,
-                wrap("Gemini", new JScrollPane(geminiPane)));
-        topSplit.setResizeWeight(0.67);
+        JPanel top = new JPanel(new GridLayout(1, 3, 8, 8));
+        top.add(wrap("Claude", claudeArea));
+        top.add(wrap("GPT", gptArea));
+        top.add(wrap("Gemini", geminiArea));
 
         promptArea = new JTextArea();
-        promptArea.setLineWrap(true);
-        promptArea.setWrapStyleWord(true);
-
-        synthesisArea = new JTextArea();
-        synthesisArea.setEditable(false);
-        synthesisArea.setLineWrap(true);
-        synthesisArea.setWrapStyleWord(true);
-
-        JSplitPane bottomSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
+        synthesisArea = createReadOnlyArea();
+        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
                 wrap("Prompt", new JScrollPane(promptArea)),
                 wrap("Synthesis", new JScrollPane(synthesisArea)));
-        bottomSplit.setResizeWeight(0.5);
+        splitPane.setResizeWeight(0.45);
 
-        JSplitPane mainVerticalSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, topSplit, bottomSplit);
-        mainVerticalSplit.setResizeWeight(0.62);
-
-        panel.add(mainVerticalSplit, BorderLayout.CENTER);
+        panel.add(top, BorderLayout.CENTER);
+        panel.add(splitPane, BorderLayout.SOUTH);
         return panel;
     }
 
@@ -118,6 +96,10 @@ public class MainGui extends JFrame implements DebateListener {
         return panel;
     }
 
+    private JPanel wrap(String title, JTextArea area) {
+        return wrap(title, new JScrollPane(area));
+    }
+
     private JPanel wrap(String title, JComponent component) {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBorder(BorderFactory.createTitledBorder(title));
@@ -125,10 +107,12 @@ public class MainGui extends JFrame implements DebateListener {
         return panel;
     }
 
-    private JTextPane createReadOnlyPane() {
-        JTextPane pane = new JTextPane();
-        pane.setEditable(false);
-        return pane;
+    private JTextArea createReadOnlyArea() {
+        JTextArea area = new JTextArea();
+        area.setEditable(false);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        return area;
     }
 
     private void initApplication() {
@@ -243,28 +227,6 @@ public class MainGui extends JFrame implements DebateListener {
         }
     }
 
-    private void onCreateProfileSet() {
-        ProfileSetEditorDialog dialog = new ProfileSetEditorDialog(this, activeProfileSet);
-        dialog.setVisible(true);
-        ProfileSet newSet = dialog.getProfileSet();
-        if (newSet == null) {
-            return;
-        }
-        try {
-            profileLibrary.saveSet(newSet, newSet.getName());
-            activeProfileSet = profileLibrary.loadSet(newSet.getName());
-            refreshProfileCombo();
-            rebuildStakeholderCombo();
-            rebuildOrchestrator();
-            statusLabel.setText("Created and loaded profile set: " + newSet.getName());
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(this,
-                    "Unable to save profile set: " + e.getMessage(),
-                    "Profile Save Error",
-                    JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
     private void onRunDebate() {
         if (orchestrator == null || activeProfileSet == null) {
             return;
@@ -280,9 +242,9 @@ public class MainGui extends JFrame implements DebateListener {
             return;
         }
 
-        clearPane(claudePane);
-        clearPane(gptPane);
-        clearPane(geminiPane);
+        claudeArea.setText("");
+        gptArea.setText("");
+        geminiArea.setText("");
         synthesisArea.setText("");
 
         new SwingWorker<Void, Void>() {
@@ -296,18 +258,14 @@ public class MainGui extends JFrame implements DebateListener {
 
     @Override
     public void onPhase1Response(String model, String perspective, String response) {
-        SwingUtilities.invokeLater(() -> appendStyledResponse(model,
-                "Phase 1 — " + perspective,
-                response,
-                colorForPhase(model, 0)));
+        SwingUtilities.invokeLater(() -> appendToModelArea(model,
+                "[Phase 1 — " + perspective + "]\n" + response + "\n\n"));
     }
 
     @Override
     public void onPhase2Reaction(int round, String model, String perspective, String reaction) {
-        SwingUtilities.invokeLater(() -> appendStyledResponse(model,
-                "Phase 2 Round " + round + " — " + perspective,
-                reaction,
-                colorForPhase(model, round)));
+        SwingUtilities.invokeLater(() -> appendToModelArea(model,
+                "[Phase 2 Round " + round + " — " + perspective + "]\n" + reaction + "\n\n"));
     }
 
     @Override
@@ -320,71 +278,16 @@ public class MainGui extends JFrame implements DebateListener {
         SwingUtilities.invokeLater(() -> statusLabel.setText(message));
     }
 
-    private void clearPane(JTextPane pane) {
-        pane.setText("");
-    }
-
-    private void appendStyledResponse(String model, String heading, String body, Color bg) {
-        JTextPane pane = paneForModel(model);
-        if (pane == null) {
-            return;
-        }
-        StyledDocument doc = pane.getStyledDocument();
-
-        SimpleAttributeSet attrs = new SimpleAttributeSet();
-        StyleConstants.setBackground(attrs, bg);
-        StyleConstants.setForeground(attrs, textColorForBackground(bg));
-
-        SimpleAttributeSet headingAttrs = new SimpleAttributeSet(attrs);
-        StyleConstants.setBold(headingAttrs, true);
-
-        try {
-            doc.insertString(doc.getLength(), heading + "\n", headingAttrs);
-            doc.insertString(doc.getLength(), body + "\n\n", attrs);
-            pane.setCaretPosition(doc.getLength());
-        } catch (BadLocationException ignored) {
-        }
-    }
-
-    private JTextPane paneForModel(String model) {
-        return switch (model) {
-            case "Claude" -> claudePane;
-            case "GPT" -> gptPane;
-            case "Gemini" -> geminiPane;
+    private void appendToModelArea(String model, String text) {
+        JTextArea target = switch (model) {
+            case "Claude" -> claudeArea;
+            case "GPT" -> gptArea;
+            case "Gemini" -> geminiArea;
             default -> null;
         };
-    }
-
-    private Color colorForPhase(String model, int round) {
-        Color[] palette;
-        switch (model) {
-            case "Claude" -> palette = new Color[]{
-                    new Color(255, 218, 170),
-                    new Color(255, 204, 140),
-                    new Color(255, 187, 108),
-                    new Color(255, 169, 82)
-            };
-            case "GPT" -> palette = new Color[]{
-                    new Color(245, 245, 245),
-                    new Color(220, 220, 220),
-                    new Color(190, 190, 190),
-                    new Color(160, 160, 160)
-            };
-            case "Gemini" -> palette = new Color[]{
-                    new Color(224, 242, 255),
-                    new Color(198, 225, 247),
-                    new Color(255, 227, 227),
-                    new Color(225, 244, 225)
-            };
-            default -> palette = new Color[]{Color.WHITE, new Color(235, 235, 235)};
+        if (target != null) {
+            target.append(text);
         }
-        int idx = Math.min(round, palette.length - 1);
-        return palette[idx];
-    }
-
-    private Color textColorForBackground(Color bg) {
-        int luminance = (int) (0.299 * bg.getRed() + 0.587 * bg.getGreen() + 0.114 * bg.getBlue());
-        return luminance < 140 ? Color.WHITE : Color.BLACK;
     }
 
     public static void launch() {
