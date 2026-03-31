@@ -83,6 +83,32 @@ public class PromptBuilder {
     }
 
     // ============================================================
+    // buildSystemInstruction() — Builds the shared system context
+    // for the new multi-turn path.
+    //
+    // This is the single source of onion context and should be
+    // passed as the system instruction for all phases.
+    // ============================================================
+    public String buildSystemInstruction(AgentProfile agent,
+                                         StakeholderProfile stakeholder) {
+        return TEAM_CONTEXT
+             + agent.toBriefing()
+             + stakeholder.toBriefing()
+             + context.getHistoryBlock();
+    }
+
+    // ============================================================
+    // buildPhase1UserMessage() — Builds only the user question
+    // block for Phase 1 in the new multi-turn path.
+    //
+    // No onion wrapping is included here because shared context
+    // comes from buildSystemInstruction(...).
+    // ============================================================
+    public String buildPhase1UserMessage(String userPrompt) {
+        return "=== STAKEHOLDER'S QUESTION ===\n" + userPrompt;
+    }
+
+    // ============================================================
     // buildReactionPrompt() — Constructs the Phase 2 prompt where
     // one model reacts to the other two.
     //
@@ -145,6 +171,43 @@ public class PromptBuilder {
     }
 
     // ============================================================
+    // buildPhase2PeerMessage() — Constructs only the reaction body
+    // for Phase 2 in the new multi-turn path.
+    //
+    // TEAM/agent/stakeholder context is intentionally omitted
+    // because it now comes from buildSystemInstruction(...).
+    // ============================================================
+    public String buildPhase2PeerMessage(AgentProfile agent,
+                                         String userPrompt,
+                                         String peerAName, String peerAResponse,
+                                         String peerBName, String peerBResponse) {
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("THE ORIGINAL QUESTION:\n");
+        sb.append(userPrompt).append("\n\n");
+
+        sb.append("You are ").append(agent.getName());
+        sb.append(". You already provided your initial response.\n");
+        sb.append("Now, the other two panel members have also responded. ");
+        sb.append("Review their perspectives below, keeping YOUR assigned role in mind.\n\n");
+
+        sb.append("--- ").append(peerAName).append("'s Response ---\n");
+        sb.append(peerAResponse).append("\n\n");
+
+        sb.append("--- ").append(peerBName).append("'s Response ---\n");
+        sb.append(peerBResponse).append("\n\n");
+
+        sb.append("React FROM YOUR ASSIGNED PERSPECTIVE. Specifically:\n");
+        sb.append("1. Where do you AGREE with the other panel members? Why?\n");
+        sb.append("2. Where do you DISAGREE? What did they get wrong from YOUR perspective?\n");
+        sb.append("3. What important points did they MISS given the stakeholder's role and KPIs?\n");
+        sb.append("4. Has seeing their responses changed or refined YOUR position?\n");
+        sb.append("\nBe specific. Reference their actual arguments, not vague generalities.");
+
+        return sb.toString();
+    }
+
+    // ============================================================
     // buildSynthesisPrompt() — Constructs the Phase 3 prompt where
     // Claude synthesizes all perspectives into a structured report.
     //
@@ -179,6 +242,67 @@ public class PromptBuilder {
 
         // Include stakeholder context so the synthesis is tailored
         sb.append(stakeholder.toBriefing());
+
+        sb.append("=== PANEL COMPOSITION ===\n");
+        sb.append("Claude: Chief Strategy & Risk Analyst\n");
+        sb.append("GPT: Innovation & Opportunity Analyst\n");
+        sb.append("Gemini: Technical Feasibility & Implementation Lead\n\n");
+
+        sb.append("The panel debated the following question from the stakeholder above.\n\n");
+
+        sb.append("=== ORIGINAL QUESTION ===\n");
+        sb.append(userPrompt).append("\n\n");
+
+        sb.append("=== PHASE 1: INITIAL RESPONSES ===\n\n");
+        sb.append("--- Claude (Strategy & Risk) ---\n").append(claudeInitial).append("\n\n");
+        sb.append("--- GPT (Innovation & Opportunity) ---\n").append(gptInitial).append("\n\n");
+        sb.append("--- Gemini (Technical Feasibility) ---\n").append(geminiInitial).append("\n\n");
+
+        sb.append("=== PHASE 2: CROSS-REACTIONS ===\n\n");
+        sb.append("--- Claude's Reaction ---\n").append(claudeReaction).append("\n\n");
+        sb.append("--- GPT's Reaction ---\n").append(gptReaction).append("\n\n");
+        sb.append("--- Gemini's Reaction ---\n").append(geminiReaction).append("\n\n");
+
+        sb.append("=== YOUR TASK ===\n");
+        sb.append("Produce a SYNTHESIS REPORT with the following sections.\n");
+        sb.append("Tailor the report to the active stakeholder's role, KPIs, ");
+        sb.append("and decision authority.\n\n");
+
+        sb.append("1. AREAS OF AGREEMENT\n");
+        sb.append("   What conclusions do all three panel members converge on? ");
+        sb.append("These are the highest-confidence findings.\n\n");
+
+        sb.append("2. AREAS OF DISAGREEMENT\n");
+        sb.append("   Where do panel members conflict? Identify which ROLE ");
+        sb.append("(strategy vs innovation vs technical) drives each position.\n\n");
+
+        sb.append("3. KEY INSIGHTS\n");
+        sb.append("   What emerged from the cross-reaction that wasn't in ");
+        sb.append("the initial responses? What changed when perspectives collided?\n\n");
+
+        sb.append("4. RECOMMENDATION FOR THIS STAKEHOLDER\n");
+        sb.append("   Given the stakeholder's specific KPIs, authority, and role, ");
+        sb.append("what should THEY specifically do? What's actionable for THEM?\n\n");
+
+        sb.append("Be thorough but concise. Reference specific arguments from each panel member.");
+
+        return sb.toString();
+    }
+
+    // ============================================================
+    // buildPhase3SynthesisMessage() — Constructs the synthesis body
+    // for the new multi-turn path.
+    //
+    // Stakeholder profile prefix is intentionally omitted because
+    // stakeholder context now comes from buildSystemInstruction(...).
+    // ============================================================
+    public String buildPhase3SynthesisMessage(StakeholderProfile stakeholder,
+                                              String userPrompt,
+                                              String claudeInitial, String gptInitial, String geminiInitial,
+                                              String claudeReaction, String gptReaction, String geminiReaction) {
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("You are the orchestrator of a multi-AI advisory panel.\n\n");
 
         sb.append("=== PANEL COMPOSITION ===\n");
         sb.append("Claude: Chief Strategy & Risk Analyst\n");
