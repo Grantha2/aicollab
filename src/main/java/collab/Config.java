@@ -40,6 +40,7 @@ public class Config {
     // The Properties object holds all key-value pairs from the file.
     // Think of it as a simple map: "claude.key" -> "sk-ant-..."
     private final Properties props;
+    private final String filename;
 
     // ============================================================
     // Constructor — loads or creates the config file.
@@ -51,6 +52,7 @@ public class Config {
     //   filename — path to the config file (usually "config.properties")
     // ============================================================
     public Config(String filename) {
+        this.filename = filename;
         this.props = loadOrCreateConfig(filename);
     }
 
@@ -90,6 +92,22 @@ public class Config {
      *  Prevents prompts from growing too large and hitting token limits. */
     public int getMaxHistoryChars() {
         return Integer.parseInt(props.getProperty("max.history.chars", "24000"));
+    }
+
+
+    public void setProperty(String key, String value) {
+        props.setProperty(key, value);
+    }
+
+    public void save() throws IOException {
+        props.store(new FileOutputStream(new File(filename)),
+                "API keys — this file is gitignored, NEVER commit it.");
+    }
+
+    public Properties getProperties() {
+        Properties copy = new Properties();
+        copy.putAll(props);
+        return copy;
     }
 
     // ============================================================

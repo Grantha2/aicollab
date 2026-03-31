@@ -30,7 +30,7 @@ public class PromptBuilder {
 
     // The "middle layer" of the onion — shared by all agents.
     // Tells every model what kind of team they're part of.
-	private static final String TEAM_CONTEXT =
+	static final String DEFAULT_TEAM_CONTEXT =
 			   "=== COLLABORATION CONTEXT ===\n"
 				          + "You are one of three AI collaborators helping a team of four university students\n"
 				          + "build an AI collaboration platform as their final project (3-week deadline).\n"
@@ -45,6 +45,7 @@ public class PromptBuilder {
     // ConversationContext provides history from previous cycles.
     // Injected via constructor so this class doesn't depend on global state.
     private final ConversationContext context;
+    private final String teamContext;
 
     // ============================================================
     // Constructor.
@@ -54,7 +55,12 @@ public class PromptBuilder {
     //             context.getHistoryBlock() to include prior cycles.
     // ============================================================
     public PromptBuilder(ConversationContext context) {
+        this(context, DEFAULT_TEAM_CONTEXT);
+    }
+
+    public PromptBuilder(ConversationContext context, String teamContext) {
         this.context = context;
+        this.teamContext = teamContext;
     }
 
     // ============================================================
@@ -74,7 +80,7 @@ public class PromptBuilder {
     public String buildPhase1Prompt(AgentProfile agent,
                                     StakeholderProfile stakeholder,
                                     String userPrompt) {
-        return TEAM_CONTEXT
+        return teamContext
              + agent.toBriefing()
              + stakeholder.toBriefing()
              + context.getHistoryBlock()
@@ -91,7 +97,7 @@ public class PromptBuilder {
     // ============================================================
     public String buildSystemInstruction(AgentProfile agent,
                                          StakeholderProfile stakeholder) {
-        return TEAM_CONTEXT
+        return teamContext
              + agent.toBriefing()
              + stakeholder.toBriefing()
              + context.getHistoryBlock();
@@ -139,7 +145,7 @@ public class PromptBuilder {
         StringBuilder sb = new StringBuilder();
 
         // Layer 1: Agent identity (stay in character during reaction)
-        sb.append(TEAM_CONTEXT);
+        sb.append(teamContext);
         sb.append(agent.toBriefing());
 
         // Layer 2: Stakeholder context (remember who you're advising)
