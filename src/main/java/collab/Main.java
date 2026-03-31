@@ -42,6 +42,11 @@ import java.util.Scanner;
 public class Main {
 
     public static void main(String[] args) {
+        boolean cliMode = java.util.Arrays.stream(args).anyMatch("--cli"::equals);
+        if (!cliMode) {
+            MainGui.launch();
+            return;
+        }
 
         // ==========================
         // STEP 1: LOAD CONFIGURATION
