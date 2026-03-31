@@ -31,6 +31,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 
 public class OpenAiClient implements LlmClient {
 
@@ -105,6 +107,63 @@ public class OpenAiClient implements LlmClient {
             // response — once in the request echo section and once in the actual
             // answer. extractField uses lastIndexOf() to grab the LAST occurrence,
             // which is the answer we want.
+            return extractField(response.body(), "content");
+
+        } catch (Exception e) {
+            return "[GPT ERROR] " + e.getMessage();
+        }
+    }
+
+    // ============================================================
+    // sendMessage(LlmRequest) — Native multi-turn request path.
+    //
+    // WHY THIS EXISTS:
+    // OpenAI expects conversation structure as an ordered messages
+    // array. During migration we preserve the old flat path while
+    // adding this provider-native path for role-aware multi-turn use.
+    // ============================================================
+    @Override
+    public String sendMessage(LlmRequest request) {
+
+        JsonArray messages = new JsonArray();
+
+        if (request.systemInstruction() != null
+                && !request.systemInstruction().isEmpty()) {
+            JsonObject sysMsg = new JsonObject();
+            sysMsg.addProperty("role", "system");
+            sysMsg.addProperty("content", request.systemInstruction());
+            messages.add(sysMsg);
+        }
+
+        for (ChatMessage msg : request.messages()) {
+            JsonObject m = new JsonObject();
+            m.addProperty("role", msg.role());
+            m.addProperty("content", msg.content());
+            messages.add(m);
+        }
+
+        JsonObject body = new JsonObject();
+        body.addProperty("model", modelName);
+        body.addProperty("max_completion_tokens", request.maxTokens());
+        body.add("messages", messages);
+
+        String requestBody = body.toString();
+
+        try {
+            HttpRequest requestObj = HttpRequest.newBuilder()
+                    .uri(URI.create(apiUrl))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(requestObj,
+                    HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                return "[GPT ERROR " + response.statusCode() + "] " + response.body();
+            }
+
             return extractField(response.body(), "content");
 
         } catch (Exception e) {

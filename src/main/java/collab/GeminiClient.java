@@ -31,6 +31,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 
 public class GeminiClient implements LlmClient {
 
@@ -111,6 +113,77 @@ public class GeminiClient implements LlmClient {
             // Gemini's response JSON structure:
             // { "candidates": [{ "content": { "parts": [{ "text": "answer" }] } }] }
             // We want the "text" field inside parts.
+            return extractField(response.body(), "text");
+
+        } catch (Exception e) {
+            return "[Gemini ERROR] " + e.getMessage();
+        }
+    }
+
+    // ============================================================
+    // sendMessage(LlmRequest) — Native multi-turn request path.
+    //
+    // WHY THIS EXISTS:
+    // Gemini uses a different JSON dialect ("contents"/"parts"),
+    // so this method maps app-level ChatMessage roles and content
+    // into Google's provider-specific format without changing the
+    // legacy flat-string path.
+    // ============================================================
+    @Override
+    public String sendMessage(LlmRequest request) {
+
+        JsonObject body = new JsonObject();
+
+        if (request.systemInstruction() != null
+                && !request.systemInstruction().isEmpty()) {
+            JsonObject sysInstr = new JsonObject();
+            JsonArray sysParts = new JsonArray();
+            JsonObject sysPart = new JsonObject();
+            sysPart.addProperty("text", request.systemInstruction());
+            sysParts.add(sysPart);
+            sysInstr.add("parts", sysParts);
+            body.add("system_instruction", sysInstr);
+        }
+
+        JsonArray contents = new JsonArray();
+        for (ChatMessage msg : request.messages()) {
+            JsonObject entry = new JsonObject();
+            String geminiRole = msg.role().equals("assistant") ? "model" : msg.role();
+            entry.addProperty("role", geminiRole);
+
+            JsonArray parts = new JsonArray();
+            JsonObject part = new JsonObject();
+            part.addProperty("text", msg.content());
+            parts.add(part);
+            entry.add("parts", parts);
+
+            contents.add(entry);
+        }
+        body.add("contents", contents);
+
+        JsonObject genConfig = new JsonObject();
+        genConfig.addProperty("maxOutputTokens", request.maxTokens());
+        body.add("generationConfig", genConfig);
+
+        String requestBody = body.toString();
+
+        String url = "https://generativelanguage.googleapis.com/v1beta/models/"
+                + modelName + ":generateContent?key=" + apiKey;
+
+        try {
+            HttpRequest requestObj = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(requestObj,
+                    HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                return "[Gemini ERROR " + response.statusCode() + "] " + response.body();
+            }
+
             return extractField(response.body(), "text");
 
         } catch (Exception e) {

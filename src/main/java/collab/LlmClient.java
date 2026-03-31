@@ -66,4 +66,33 @@ public interface LlmClient {
     //   the debate going even if one model fails.
     // ============================================================
     String sendMessage(String prompt);
+
+    // ============================================================
+    // sendMessage(LlmRequest) — New structured request path.
+    //
+    // WHY THIS IS A DEFAULT METHOD:
+    // We are migrating in phases. Existing clients already implement
+    // sendMessage(String). By providing a default implementation here,
+    // we can introduce LlmRequest without breaking any existing code.
+    //
+    // MIGRATION BEHAVIOR:
+    // For now, the default path flattens systemInstruction + messages
+    // into one string and delegates to the legacy method. As each
+    // provider is upgraded, it can override this method to send true
+    // multi-turn payloads natively.
+    // ============================================================
+    default String sendMessage(LlmRequest request) {
+        StringBuilder flat = new StringBuilder();
+
+        if (request.systemInstruction() != null
+                && !request.systemInstruction().isEmpty()) {
+            flat.append(request.systemInstruction()).append("\n\n");
+        }
+
+        for (ChatMessage msg : request.messages()) {
+            flat.append(msg.content()).append("\n\n");
+        }
+
+        return sendMessage(flat.toString().trim());
+    }
 }
