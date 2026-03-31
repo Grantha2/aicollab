@@ -60,6 +60,7 @@ public class Orchestrator {
     private final ConversationContext context;
     private final int configuredMaxTokens;
     private final SessionStore sessionStore;
+    private DebateListener listener;
 
     // How many rounds of cross-reaction in Phase 2.
     // 1 round = standard (each model reacts once to the other two).
@@ -90,6 +91,34 @@ public class Orchestrator {
         this.sessionStore = sessionStore;
     }
 
+    public void setDebateListener(DebateListener listener) {
+        this.listener = listener;
+    }
+
+    private void notifyStatus(String message) {
+        if (listener != null) {
+            listener.onStatusUpdate(message);
+        }
+    }
+
+    private void notifyPhase1(String model, String perspective, String response) {
+        if (listener != null) {
+            listener.onPhase1Response(model, perspective, response);
+        }
+    }
+
+    private void notifyPhase2(int round, String model, String perspective, String reaction) {
+        if (listener != null) {
+            listener.onPhase2Reaction(round, model, perspective, reaction);
+        }
+    }
+
+    private void notifySynthesis(String synthesis) {
+        if (listener != null) {
+            listener.onSynthesis(synthesis);
+        }
+    }
+
     // ============================================================
     // runDebate() — Executes the full 3-phase debate cycle.
     //
@@ -117,22 +146,31 @@ public class Orchestrator {
         System.out.println("\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d");
 
         System.out.println("\n[Calling Claude (Strategy & Risk)...]");
+        notifyStatus("Calling Claude (Strategy & Risk)...");
         String claudeResponse = claudeClient.sendMessage(
                 promptBuilder.buildPhase1Prompt(claudeAgent, activeStakeholder, userPrompt));
         persistTurn(cycle, "phase1", "Claude", claudeAgent.getPerspective(), claudeResponse);
         System.out.println("Claude responded. \u2713");
+        notifyPhase1("Claude", claudeAgent.getPerspective(), claudeResponse);
+        notifyStatus("Claude responded.");
 
         System.out.println("\n[Calling GPT (Innovation & Opportunity)...]");
+        notifyStatus("Calling GPT (Innovation & Opportunity)...");
         String gptResponse = gptClient.sendMessage(
                 promptBuilder.buildPhase1Prompt(gptAgent, activeStakeholder, userPrompt));
         persistTurn(cycle, "phase1", "GPT", gptAgent.getPerspective(), gptResponse);
         System.out.println("GPT responded. \u2713");
+        notifyPhase1("GPT", gptAgent.getPerspective(), gptResponse);
+        notifyStatus("GPT responded.");
 
         System.out.println("\n[Calling Gemini (Technical Feasibility)...]");
+        notifyStatus("Calling Gemini (Technical Feasibility)...");
         String geminiResponse = geminiClient.sendMessage(
                 promptBuilder.buildPhase1Prompt(geminiAgent, activeStakeholder, userPrompt));
         persistTurn(cycle, "phase1", "Gemini", geminiAgent.getPerspective(), geminiResponse);
         System.out.println("Gemini responded. \u2713");
+        notifyPhase1("Gemini", geminiAgent.getPerspective(), geminiResponse);
+        notifyStatus("Gemini responded.");
 
         // Print Phase 1 results so the user can see what each model said
         System.out.println("\n--- Claude's Response ---");
@@ -182,25 +220,34 @@ public class Orchestrator {
             // In round 2+, "latest" = previous round's reactions.
 
             System.out.println("\n[Claude reacting to GPT and Gemini...]");
+            notifyStatus("Round " + round + ": Claude reacting...");
             String claudeReaction = claudeClient.sendMessage(
                     promptBuilder.buildReactionPrompt(claudeAgent, activeStakeholder,
                             userPrompt, "GPT", latestGpt, "Gemini", latestGemini));
             persistTurn(cycle, "phase2-round-" + round, "Claude", claudeAgent.getPerspective(), claudeReaction);
             System.out.println("Claude reacted. \u2713");
+            notifyPhase2(round, "Claude", claudeAgent.getPerspective(), claudeReaction);
+            notifyStatus("Round " + round + ": Claude reacted.");
 
             System.out.println("\n[GPT reacting to Claude and Gemini...]");
+            notifyStatus("Round " + round + ": GPT reacting...");
             String gptReaction = gptClient.sendMessage(
                     promptBuilder.buildReactionPrompt(gptAgent, activeStakeholder,
                             userPrompt, "Claude", latestClaude, "Gemini", latestGemini));
             persistTurn(cycle, "phase2-round-" + round, "GPT", gptAgent.getPerspective(), gptReaction);
             System.out.println("GPT reacted. \u2713");
+            notifyPhase2(round, "GPT", gptAgent.getPerspective(), gptReaction);
+            notifyStatus("Round " + round + ": GPT reacted.");
 
             System.out.println("\n[Gemini reacting to Claude and GPT...]");
+            notifyStatus("Round " + round + ": Gemini reacting...");
             String geminiReaction = geminiClient.sendMessage(
                     promptBuilder.buildReactionPrompt(geminiAgent, activeStakeholder,
                             userPrompt, "Claude", latestClaude, "GPT", latestGpt));
             persistTurn(cycle, "phase2-round-" + round, "Gemini", geminiAgent.getPerspective(), geminiReaction);
             System.out.println("Gemini reacted. \u2713");
+            notifyPhase2(round, "Gemini", geminiAgent.getPerspective(), geminiReaction);
+            notifyStatus("Round " + round + ": Gemini reacted.");
 
             // Print this round's reactions
             System.out.println("\n--- Claude's Reaction ---");
@@ -240,9 +287,12 @@ public class Orchestrator {
         );
 
         System.out.println("\n[Claude synthesizing all perspectives...]");
+        notifyStatus("Generating synthesis...");
         String synthesis = claudeClient.sendMessage(synthesisPrompt);
 
         System.out.println("\n" + synthesis);
+        notifySynthesis(synthesis);
+        notifyStatus("Debate complete.");
 
         // Store the synthesis in conversation memory so the next cycle
         // can reference what was discussed in this one.

@@ -26,16 +26,18 @@ import java.util.List;
 public class AgentProfile {
 
     // The model's display name — shown in console output and prompts.
-    private final String name;
+    private String name;
 
     // The high-level role — e.g., "Architecture & Quality".
     // This is the one-line summary of what this agent focuses on.
-    private final String perspective;
+    private String perspective;
 
     // The detailed multi-line description of priorities and style.
     // This is what actually shapes the model's behavior — it tells
     // the AI what to prioritize, how to disagree, and what to watch for.
-    private final String lens;
+    private String lens;
+
+    AgentProfile() {}
 
     public AgentProfile(String name, String perspective, String lens) {
         this.name = name;
@@ -45,6 +47,7 @@ public class AgentProfile {
 
     public String getName()        { return name; }
     public String getPerspective() { return perspective; }
+    public String getLens() { return lens; }
 
     // ============================================================
     // toBriefing() — Formats this agent's identity as a prompt-ready
