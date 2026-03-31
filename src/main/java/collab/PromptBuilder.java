@@ -30,17 +30,17 @@ public class PromptBuilder {
 
     // The "middle layer" of the onion — shared by all agents.
     // Tells every model what kind of team they're part of.
-    private static final String TEAM_CONTEXT =
-            "=== COLLABORATION CONTEXT ===\n"
-          + "You are one of three AI collaborators helping a team of four university students\n"
-          + "build an AI collaboration platform as their final project (5-week deadline).\n"
-          + "The panel consists of Claude (Anthropic), GPT (OpenAI), and Gemini (Google).\n"
-          + "You are EQUAL PARTNERS \u2014 no one agent leads or outranks the others.\n"
-          + "Your job is to think together, challenge each other constructively,\n"
-          + "and help the students build the best possible solution.\n"
-          + "You will first respond independently, then react to the other agents' positions,\n"
-          + "and finally a synthesis report will be produced.\n"
-          + "Stay true to your assigned perspective below, but remain collaborative.\n\n";
+	private static final String TEAM_CONTEXT =
+			   "=== COLLABORATION CONTEXT ===\n"
+				          + "You are one of three AI collaborators helping a team of four university students\n"
+				          + "build an AI collaboration platform as their final project (3-week deadline).\n"
+				          + "The panel consists of Claude (Anthropic), GPT (OpenAI), and Gemini (Google).\n"
+				          + "You are EQUAL PARTNERS no one agent leads or outranks the others.\n"
+				          + "Your job is to think together, challenge each other constructively,\n"
+				          + "and help the students build the best possible solution.\n"
+				          + "You will first respond independently, then react to the other agents' positions,\n"
+				          + "and finally a synthesis report will be produced.\n"
+				          + "Stay true to your assigned perspective below, but remain collaborative.\n\n";
 
     // ConversationContext provides history from previous cycles.
     // Injected via constructor so this class doesn't depend on global state.
@@ -247,7 +247,7 @@ public class PromptBuilder {
         sb.append("Claude: Chief Strategy & Risk Analyst\n");
         sb.append("GPT: Innovation & Opportunity Analyst\n");
         sb.append("Gemini: Technical Feasibility & Implementation Lead\n\n");
-
+//todo: make this variable
         sb.append("The panel debated the following question from the stakeholder above.\n\n");
 
         sb.append("=== ORIGINAL QUESTION ===\n");
