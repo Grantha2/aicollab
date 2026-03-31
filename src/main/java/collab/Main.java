@@ -35,6 +35,7 @@ package collab;
 // ============================================================
 
 import java.net.http.HttpClient;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Scanner;
 
@@ -101,6 +102,8 @@ public class Main {
         // ConversationContext stores synthesis reports from past cycles.
         // PromptBuilder uses it to include history in future prompts.
         ConversationContext context = new ConversationContext(config.getMaxHistoryChars());
+        Scanner scanner = new Scanner(System.in);
+        SessionStore sessionStore = selectSessionStore(scanner, context);
         PromptBuilder promptBuilder = new PromptBuilder(context);
 
         // ==========================
@@ -113,12 +116,11 @@ public class Main {
                 claudeClient, gptClient, geminiClient,
                 claudeAgent, gptAgent, geminiAgent,
                 promptBuilder, context,
-                config.getDebateRounds());
+                config.getDebateRounds(), sessionStore);
 
         // ==========================
         // STEP 8: RUN THE CLI LOOP
         // ==========================
-        Scanner scanner = new Scanner(System.in);
         int cycleCount = 0;
         int activeStakeholderIndex = 0;
 
@@ -126,6 +128,7 @@ public class Main {
         System.out.println("  AI Collaboration Platform v0.4");
         System.out.println("  Full Debate Cycle: 3 Models + Synthesis");
         System.out.println("  Each cycle makes " + orchestrator.getApiCallCount() + " API calls.");
+        System.out.println("  Session file: " + sessionStore.getSessionFile());
         System.out.println("  Type 'quit' to exit.");
         System.out.println("========================================");
 
@@ -252,6 +255,67 @@ public class Main {
         }
 
         scanner.close();
+    }
+
+    private static SessionStore selectSessionStore(Scanner scanner, ConversationContext context) {
+        while (true) {
+            System.out.println();
+            System.out.println("Session options:");
+            System.out.println("  1) Start new session");
+            System.out.println("  2) Resume existing session");
+            System.out.print("Choose 1 or 2: ");
+            String choice = scanner.nextLine().trim();
+
+            if ("1".equals(choice)) {
+                SessionStore store = SessionStore.createNewDefaultSession();
+                System.out.println("Created new session: " + store.getSessionFile());
+                return store;
+            }
+
+            if ("2".equals(choice)) {
+                List<Path> files = SessionStore.listSessionFiles(SessionStore.defaultSessionsDir());
+                if (files.isEmpty()) {
+                    System.out.println("No session files found in " + SessionStore.defaultSessionsDir()
+                            + ". Starting a new one instead.");
+                    SessionStore store = SessionStore.createNewDefaultSession();
+                    System.out.println("Created new session: " + store.getSessionFile());
+                    return store;
+                }
+
+                System.out.println("Available sessions:");
+                for (int i = 0; i < files.size(); i++) {
+                    System.out.println("  " + (i + 1) + ") " + files.get(i).getFileName());
+                }
+                System.out.print("Enter session number to resume: ");
+                String selected = scanner.nextLine().trim();
+                try {
+                    int idx = Integer.parseInt(selected) - 1;
+                    if (idx < 0 || idx >= files.size()) {
+                        System.out.println("Invalid session number.");
+                        continue;
+                    }
+                    Path selectedFile = files.get(idx);
+                    SessionStore store = new SessionStore(selectedFile);
+                    List<ConversationTurn> turns = store.loadTurns(selectedFile);
+                    for (ConversationTurn turn : turns) {
+                        context.addTurn(turn);
+                    }
+                    List<String> syntheses = store.loadSyntheses(selectedFile);
+                    for (String synthesis : syntheses) {
+                        context.addSynthesis(synthesis);
+                    }
+                    System.out.println("Resumed: " + selectedFile);
+                    System.out.println("Loaded " + turns.size() + " turns and "
+                            + syntheses.size() + " synthesis entries.");
+                    return store;
+                } catch (NumberFormatException e) {
+                    System.out.println("Please enter a valid number.");
+                }
+                continue;
+            }
+
+            System.out.println("Please enter 1 or 2.");
+        }
     }
 
 

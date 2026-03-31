@@ -41,6 +41,7 @@ public class ConversationContext {
     // Each entry is one cycle's synthesis report.
     // The oldest entry is at index 0; newest is at the end.
     private final List<String> syntheses = new ArrayList<>();
+    private final List<ConversationTurn> turns = new ArrayList<>();
 
     // Maximum total characters across all stored syntheses.
     // When exceeded, we remove the oldest entries first.
@@ -69,6 +70,10 @@ public class ConversationContext {
     public void addSynthesis(String synthesis) {
         syntheses.add(synthesis);
         trimHistory();
+    }
+
+    public void addTurn(ConversationTurn turn) {
+        turns.add(turn);
     }
 
     // ============================================================
@@ -115,6 +120,10 @@ public class ConversationContext {
         return syntheses.size();
     }
 
+    public int getTurnCount() {
+        return turns.size();
+    }
+
     // ============================================================
     // clear() — Resets all stored history.
     //
@@ -123,6 +132,7 @@ public class ConversationContext {
     // ============================================================
     public void clear() {
         syntheses.clear();
+        turns.clear();
     }
 
     // ============================================================
