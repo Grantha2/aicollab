@@ -29,6 +29,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 
 public class AnthropicClient implements LlmClient {
 
@@ -116,6 +118,61 @@ public class AnthropicClient implements LlmClient {
             // Claude's response JSON structure:
             // { "content": [{ "type": "text", "text": "the actual answer" }] }
             // We want the value of the "text" field.
+            return extractField(response.body(), "text");
+
+        } catch (Exception e) {
+            return "[Claude ERROR] " + e.getMessage();
+        }
+    }
+
+    // ============================================================
+    // sendMessage(LlmRequest) — Native multi-turn request path.
+    //
+    // WHY THIS EXISTS:
+    // The migration goal is to send structured role-tagged turns
+    // instead of one giant flat prompt string. Anthropic supports
+    // top-level "system" plus a "messages" array, so we map the
+    // provider-agnostic LlmRequest to that shape here.
+    // ============================================================
+    @Override
+    public String sendMessage(LlmRequest request) {
+
+        JsonObject body = new JsonObject();
+        body.addProperty("model", modelName);
+        body.addProperty("max_tokens", request.maxTokens());
+
+        if (request.systemInstruction() != null
+                && !request.systemInstruction().isEmpty()) {
+            body.addProperty("system", request.systemInstruction());
+        }
+
+        JsonArray messages = new JsonArray();
+        for (ChatMessage msg : request.messages()) {
+            JsonObject m = new JsonObject();
+            m.addProperty("role", msg.role());
+            m.addProperty("content", msg.content());
+            messages.add(m);
+        }
+        body.add("messages", messages);
+
+        String requestBody = body.toString();
+
+        try {
+            HttpRequest httpRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(apiUrl))
+                    .header("Content-Type", "application/json")
+                    .header("x-api-key", apiKey)
+                    .header("anthropic-version", "2023-06-01")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(httpRequest,
+                    HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                return "[Claude ERROR " + response.statusCode() + "] " + response.body();
+            }
+
             return extractField(response.body(), "text");
 
         } catch (Exception e) {
