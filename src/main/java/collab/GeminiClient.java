@@ -33,6 +33,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 public class GeminiClient implements LlmClient {
 
@@ -191,6 +192,67 @@ public class GeminiClient implements LlmClient {
         }
     }
 
+
+    // ============================================================
+    // sendStateful() — Gemini Interactions API (stateful conversation).
+    //
+    // Uses POST https://generativelanguage.googleapis.com/v1beta/interactions
+    // with x-goog-api-key header (not key-in-URL like generateContent).
+    // On first call, sends input text. On chained calls, also sends
+    // previous_interaction_id. Falls back to stateless on any failure.
+    // ============================================================
+    @Override
+    public StatefulResponse sendStateful(LlmRequest request, String previousStateId) {
+        try {
+            JsonObject body = new JsonObject();
+            body.addProperty("model", modelName);
+
+            if (request.systemInstruction() != null
+                    && !request.systemInstruction().isEmpty()) {
+                body.addProperty("system_instruction", request.systemInstruction());
+            }
+
+            // Always send the latest user message as input
+            body.addProperty("input", request.messages().getLast().content());
+
+            if (previousStateId != null) {
+                body.addProperty("previous_interaction_id", previousStateId);
+            }
+
+            HttpRequest httpReq = HttpRequest.newBuilder()
+                    .uri(URI.create("https://generativelanguage.googleapis.com/v1beta/interactions"))
+                    .header("Content-Type", "application/json")
+                    .header("x-goog-api-key", apiKey)
+                    .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(httpReq,
+                    HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                throw new RuntimeException("HTTP " + response.statusCode()
+                        + ": " + response.body());
+            }
+
+            // Parse Interactions API JSON:
+            // { "id": "interaction_xyz", "outputs": [{ "type": "message",
+            //   "content": [{ "type": "text", "text": "..." }] }] }
+            JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
+            String id = root.get("id").getAsString();
+            JsonArray outputs = root.getAsJsonArray("outputs");
+            JsonObject lastOutput = outputs.get(outputs.size() - 1).getAsJsonObject();
+            JsonArray content = lastOutput.getAsJsonArray("content");
+            String text = content.get(content.size() - 1).getAsJsonObject()
+                    .get("text").getAsString();
+
+            return new StatefulResponse(text, id);
+
+        } catch (Exception e) {
+            // Fallback to stateless path
+            String fallback = sendMessage(request);
+            return new StatefulResponse(fallback, null);
+        }
+    }
 
     // --- Utility methods (duplicated for self-containment — see AnthropicClient for full comments) ---
 

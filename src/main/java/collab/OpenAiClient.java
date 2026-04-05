@@ -33,6 +33,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 public class OpenAiClient implements LlmClient {
 
@@ -171,6 +172,77 @@ public class OpenAiClient implements LlmClient {
         }
     }
 
+
+    // ============================================================
+    // sendStateful() — OpenAI Responses API (stateful conversation).
+    //
+    // Uses POST https://api.openai.com/v1/responses with store=true.
+    // On first call (previousStateId == null), sends full messages as input.
+    // On chained calls, sends previous_response_id + only the new user message.
+    // Falls back to stateless sendMessage on any failure.
+    // ============================================================
+    @Override
+    public StatefulResponse sendStateful(LlmRequest request, String previousStateId) {
+        try {
+            JsonObject body = new JsonObject();
+            body.addProperty("model", modelName);
+            body.addProperty("store", true);
+
+            if (request.systemInstruction() != null
+                    && !request.systemInstruction().isEmpty()) {
+                body.addProperty("instructions", request.systemInstruction());
+            }
+
+            if (previousStateId == null) {
+                // First call — send full conversation as input array
+                JsonArray input = new JsonArray();
+                for (ChatMessage msg : request.messages()) {
+                    JsonObject m = new JsonObject();
+                    m.addProperty("role", msg.role());
+                    m.addProperty("content", msg.content());
+                    input.add(m);
+                }
+                body.add("input", input);
+            } else {
+                // Chained call — server has prior context, just send new input
+                body.addProperty("previous_response_id", previousStateId);
+                body.addProperty("input", request.messages().getLast().content());
+            }
+
+            HttpRequest httpReq = HttpRequest.newBuilder()
+                    .uri(URI.create("https://api.openai.com/v1/responses"))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(httpReq,
+                    HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                throw new RuntimeException("HTTP " + response.statusCode()
+                        + ": " + response.body());
+            }
+
+            // Parse Responses API JSON:
+            // { "id": "resp_abc", "output": [{ "type": "message",
+            //   "content": [{ "type": "output_text", "text": "..." }] }] }
+            JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
+            String id = root.get("id").getAsString();
+            String text = root.getAsJsonArray("output")
+                    .get(0).getAsJsonObject()
+                    .getAsJsonArray("content")
+                    .get(0).getAsJsonObject()
+                    .get("text").getAsString();
+
+            return new StatefulResponse(text, id);
+
+        } catch (Exception e) {
+            // Fallback to stateless path
+            String fallback = sendMessage(request);
+            return new StatefulResponse(fallback, null);
+        }
+    }
 
     // --- Utility methods (duplicated for self-containment — see AnthropicClient for full comments) ---
 

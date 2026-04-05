@@ -40,6 +40,8 @@ package collab;
 //             insights, and a stakeholder-specific recommendation.
 // ============================================================
 
+import java.util.List;
+
 public class Orchestrator {
 
     // The three AI clients. These are LlmClient interfaces —
@@ -133,6 +135,10 @@ public class Orchestrator {
     public void runDebate(String userPrompt, StakeholderProfile activeStakeholder) {
         int cycle = context.getCycleCount() + 1;
 
+        // State IDs for stateful API chaining (OpenAI Responses / Gemini Interactions)
+        String gptStateId = null;
+        String geminiStateId = null;
+
         // ==========================
         // PHASE 1: INDEPENDENT RESPONSES
         // ==========================
@@ -156,8 +162,13 @@ public class Orchestrator {
 
         System.out.println("\n[Calling GPT (Innovation & Opportunity)...]");
         notifyStatus("Calling GPT (Innovation & Opportunity)...");
-        String gptResponse = gptClient.sendMessage(
-                promptBuilder.buildPhase1Prompt(gptAgent, activeStakeholder, userPrompt));
+        LlmRequest gptP1Request = new LlmRequest(
+                promptBuilder.buildSystemInstruction(gptAgent, activeStakeholder),
+                List.of(new ChatMessage("user", promptBuilder.buildPhase1UserMessage(userPrompt))),
+                configuredMaxTokens);
+        StatefulResponse gptP1 = gptClient.sendStateful(gptP1Request, null);
+        String gptResponse = gptP1.text();
+        gptStateId = gptP1.stateId();
         persistTurn(cycle, "phase1", "GPT", gptAgent.getPerspective(), gptResponse);
         System.out.println("GPT responded. \u2713");
         notifyPhase1("GPT", gptAgent.getPerspective(), gptResponse);
@@ -165,8 +176,13 @@ public class Orchestrator {
 
         System.out.println("\n[Calling Gemini (Technical Feasibility)...]");
         notifyStatus("Calling Gemini (Technical Feasibility)...");
-        String geminiResponse = geminiClient.sendMessage(
-                promptBuilder.buildPhase1Prompt(geminiAgent, activeStakeholder, userPrompt));
+        LlmRequest geminiP1Request = new LlmRequest(
+                promptBuilder.buildSystemInstruction(geminiAgent, activeStakeholder),
+                List.of(new ChatMessage("user", promptBuilder.buildPhase1UserMessage(userPrompt))),
+                configuredMaxTokens);
+        StatefulResponse geminiP1 = geminiClient.sendStateful(geminiP1Request, null);
+        String geminiResponse = geminiP1.text();
+        geminiStateId = geminiP1.stateId();
         persistTurn(cycle, "phase1", "Gemini", geminiAgent.getPerspective(), geminiResponse);
         System.out.println("Gemini responded. \u2713");
         notifyPhase1("Gemini", geminiAgent.getPerspective(), geminiResponse);
@@ -231,9 +247,15 @@ public class Orchestrator {
 
             System.out.println("\n[GPT reacting to Claude and Gemini...]");
             notifyStatus("Round " + round + ": GPT reacting...");
-            String gptReaction = gptClient.sendMessage(
-                    promptBuilder.buildReactionPrompt(gptAgent, activeStakeholder,
-                            userPrompt, "Claude", latestClaude, "Gemini", latestGemini));
+            String gptReactionBody = promptBuilder.buildPhase2PeerMessage(
+                    gptAgent, userPrompt, "Claude", latestClaude, "Gemini", latestGemini);
+            LlmRequest gptP2Request = new LlmRequest(
+                    null,  // system instruction already on server
+                    List.of(new ChatMessage("user", gptReactionBody)),
+                    configuredMaxTokens);
+            StatefulResponse gptP2 = gptClient.sendStateful(gptP2Request, gptStateId);
+            String gptReaction = gptP2.text();
+            gptStateId = gptP2.stateId();
             persistTurn(cycle, "phase2-round-" + round, "GPT", gptAgent.getPerspective(), gptReaction);
             System.out.println("GPT reacted. \u2713");
             notifyPhase2(round, "GPT", gptAgent.getPerspective(), gptReaction);
@@ -241,9 +263,15 @@ public class Orchestrator {
 
             System.out.println("\n[Gemini reacting to Claude and GPT...]");
             notifyStatus("Round " + round + ": Gemini reacting...");
-            String geminiReaction = geminiClient.sendMessage(
-                    promptBuilder.buildReactionPrompt(geminiAgent, activeStakeholder,
-                            userPrompt, "Claude", latestClaude, "GPT", latestGpt));
+            String geminiReactionBody = promptBuilder.buildPhase2PeerMessage(
+                    geminiAgent, userPrompt, "Claude", latestClaude, "GPT", latestGpt);
+            LlmRequest geminiP2Request = new LlmRequest(
+                    null,  // system instruction already on server
+                    List.of(new ChatMessage("user", geminiReactionBody)),
+                    configuredMaxTokens);
+            StatefulResponse geminiP2 = geminiClient.sendStateful(geminiP2Request, geminiStateId);
+            String geminiReaction = geminiP2.text();
+            geminiStateId = geminiP2.stateId();
             persistTurn(cycle, "phase2-round-" + round, "Gemini", geminiAgent.getPerspective(), geminiReaction);
             System.out.println("Gemini reacted. \u2713");
             notifyPhase2(round, "Gemini", geminiAgent.getPerspective(), geminiReaction);
