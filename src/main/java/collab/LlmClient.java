@@ -95,4 +95,17 @@ public interface LlmClient {
 
         return sendMessage(flat.toString().trim());
     }
+
+    // ============================================================
+    // sendStateful() — Stateful conversation path.
+    //
+    // Providers that support server-side conversation state (OpenAI
+    // Responses API, Gemini Interactions API) override this to pass
+    // a previous state ID and receive a new one. The default falls
+    // back to the stateless sendMessage path with a null stateId.
+    // ============================================================
+    default StatefulResponse sendStateful(LlmRequest request, String previousStateId) {
+        String text = sendMessage(request);
+        return new StatefulResponse(text, null);
+    }
 }
