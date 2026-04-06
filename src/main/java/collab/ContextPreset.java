@@ -18,18 +18,21 @@ public class ContextPreset {
     private boolean stakeholder;
     private boolean history;
     private boolean taskContext;
+    private boolean orgContext;
     private String teamContextOverride;
 
     public ContextPreset() {}
 
     public ContextPreset(String name, boolean teamContext, boolean agentIdentity,
-                         boolean stakeholder, boolean history, boolean taskContext) {
+                         boolean stakeholder, boolean history, boolean taskContext,
+                         boolean orgContext) {
         this.name = name;
         this.teamContext = teamContext;
         this.agentIdentity = agentIdentity;
         this.stakeholder = stakeholder;
         this.history = history;
         this.taskContext = taskContext;
+        this.orgContext = orgContext;
     }
 
     public String getName()             { return name; }
@@ -38,6 +41,7 @@ public class ContextPreset {
     public boolean isStakeholder()      { return stakeholder; }
     public boolean isHistory()          { return history; }
     public boolean isTaskContext()      { return taskContext; }
+    public boolean isOrgContext()       { return orgContext; }
     public String getTeamContextOverride() { return teamContextOverride; }
 
     public void setName(String name)                      { this.name = name; }
@@ -46,6 +50,7 @@ public class ContextPreset {
     public void setStakeholder(boolean v)                  { this.stakeholder = v; }
     public void setHistory(boolean v)                      { this.history = v; }
     public void setTaskContext(boolean v)                  { this.taskContext = v; }
+    public void setOrgContext(boolean v)                   { this.orgContext = v; }
     public void setTeamContextOverride(String override)    { this.teamContextOverride = override; }
 
     // Apply this preset's settings to a ContextController.
@@ -55,19 +60,20 @@ public class ContextPreset {
         controller.setIncludeStakeholderProfile(stakeholder);
         controller.setIncludeHistory(history);
         controller.setIncludeTaskContext(taskContext);
+        controller.setIncludeOrgContext(orgContext);
         controller.setTeamContextOverride(teamContextOverride);
     }
 
     // Built-in presets.
     public static ContextPreset fullContext() {
-        return new ContextPreset("Full Context", true, true, true, true, true);
+        return new ContextPreset("Full Context", true, true, true, true, true, true);
     }
 
     public static ContextPreset minimal() {
-        return new ContextPreset("Minimal", false, false, false, false, false);
+        return new ContextPreset("Minimal", false, false, false, false, false, false);
     }
 
     public static ContextPreset noHistory() {
-        return new ContextPreset("No History", true, true, true, false, true);
+        return new ContextPreset("No History", true, true, true, false, true, true);
     }
 }

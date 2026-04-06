@@ -49,8 +49,7 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     private JLabel statusLabel;
     private int cycleCount = 0;
 
-    // View panels that receive re-parented components
-    private JPanel execContentArea;
+    // View panel for debate
     private JPanel debateViewPanel;
 
     public MainGui() {
@@ -138,21 +137,17 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     private void switchView(String viewName) {
         activeView = viewName;
 
-        // Re-parent shared debate components into the active view
-        if (VIEW_EXECUTIVE_SUITE.equals(viewName)) {
-            execContentArea.add(debateToolbar, BorderLayout.NORTH);
-            execContentArea.add(debateContentPanel, BorderLayout.CENTER);
-        } else if (VIEW_DEBATE.equals(viewName)) {
+        // Debate components only live in the Debate & Conversation view.
+        // Executive Suite is buttons-only for easier prompting.
+        if (VIEW_DEBATE.equals(viewName)) {
             debateViewPanel.add(debateToolbar, BorderLayout.NORTH);
             debateViewPanel.add(debateContentPanel, BorderLayout.CENTER);
         }
-        // Agentic view doesn't need debate components
 
         viewCardLayout.show(viewContainer, viewName);
         setTitle("AI Collaboration Platform \u2014 " + viewName);
         statusLabel.setText("Switched to " + viewName + " view.");
 
-        // Force layout refresh after re-parenting
         viewContainer.revalidate();
         viewContainer.repaint();
     }
@@ -198,18 +193,15 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         buildDebateToolbar();
         debateContentPanel = buildDebateContentPanel();
 
-        // Executive Suite view: button panel (left) + debate content (right)
+        // Executive Suite view: buttons only (for easier prompting)
         JPanel execView = new JPanel(new BorderLayout(8, 8));
-        execView.add(buildButtonPanel(), BorderLayout.WEST);
-        execContentArea = new JPanel(new BorderLayout());
-        execContentArea.add(debateToolbar, BorderLayout.NORTH);
-        execContentArea.add(debateContentPanel, BorderLayout.CENTER);
-        execView.add(execContentArea, BorderLayout.CENTER);
+        execView.add(buildButtonPanel(), BorderLayout.CENTER);
         viewContainer.add(execView, VIEW_EXECUTIVE_SUITE);
 
-        // Debate & Conversation view: full-width streams with toolbar
+        // Debate & Conversation view: toolbar + streams + synthesis + prompt
         debateViewPanel = new JPanel(new BorderLayout(8, 8));
-        // Components start in exec view; switchView re-parents them
+        debateViewPanel.add(debateToolbar, BorderLayout.NORTH);
+        debateViewPanel.add(debateContentPanel, BorderLayout.CENTER);
         viewContainer.add(debateViewPanel, VIEW_DEBATE);
 
         // Agentic Routines view: placeholder
@@ -450,6 +442,13 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
      */
     private String buildTaskEnrichedPrompt(TaskContext taskCtx, String userText) {
         StringBuilder sb = new StringBuilder();
+
+        // Prepend organization context if enabled
+        if (contextController.shouldIncludeOrgContext()) {
+            sb.append(contextController.getEffectiveOrgContext());
+            sb.append("\n");
+        }
+
         sb.append(taskCtx.buildTaskBlock());
 
         // Substitute {user_input} in the template or append user text

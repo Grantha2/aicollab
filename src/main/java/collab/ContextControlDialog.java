@@ -33,6 +33,7 @@ public class ContextControlDialog extends JDialog {
         tabs.addTab("Team Context", buildTeamContextTab());
         tabs.addTab("Agent Identities", buildAgentIdentitiesTab());
         tabs.addTab("Stakeholder", buildStakeholderTab());
+        tabs.addTab("Organization", buildOrgContextTab());
         tabs.addTab("Task Context", buildTaskContextTab());
         tabs.addTab("History", buildHistoryTab());
         tabs.addTab("Prompt Preview", buildPreviewTab());
@@ -160,6 +161,121 @@ public class ContextControlDialog extends JDialog {
             }
         }
         panel.add(new JScrollPane(fieldsPanel), BorderLayout.CENTER);
+
+        return panel;
+    }
+
+    private JPanel buildOrgContextTab() {
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        panel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+
+        OrganizationContext orgCtx = controller.getOrganizationContext();
+
+        JCheckBox toggle = new JCheckBox("Include organization context in prompts",
+                controller.shouldIncludeOrgContext());
+        toggle.addActionListener(e -> controller.setIncludeOrgContext(toggle.isSelected()));
+        panel.add(toggle, BorderLayout.NORTH);
+
+        // Scrollable form of all org context fields
+        JPanel form = new JPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(3, 4, 3, 4);
+        gbc.anchor = GridBagConstraints.NORTHWEST;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        int row = 0;
+        String[][] fields = {
+            {"Last Updated", orgCtx.getLastUpdated()},
+            {"What Changed Since Last Update", orgCtx.getWhatChangedSinceLastUpdate()},
+            {"Current Term / Date Range", orgCtx.getCurrentTermDateRange()},
+            {"Top Priorities", orgCtx.getTopPriorities()},
+            {"Active Initiatives and Status", orgCtx.getActiveInitiativesAndStatus()},
+            {"Upcoming Deadlines and Events", orgCtx.getUpcomingDeadlinesAndEvents()},
+            {"Current Metrics", orgCtx.getCurrentMetrics()},
+            {"Officer Roster and Ownership", orgCtx.getOfficerRosterAndOwnership()},
+            {"Key Partners / Stakeholders", orgCtx.getKeyPartnersStakeholders()},
+            {"Current Blockers / Risks", orgCtx.getCurrentBlockersRisks()},
+            {"Pending Decisions", orgCtx.getPendingDecisions()},
+            {"Preferred Tone / Style", orgCtx.getPreferredToneStyle()},
+        };
+
+        java.util.List<JTextArea> fieldAreas = new java.util.ArrayList<>();
+        for (String[] f : fields) {
+            gbc.gridx = 0; gbc.gridy = row; gbc.weightx = 0;
+            form.add(new JLabel(f[0] + ":"), gbc);
+            JTextArea area = new JTextArea(f[1] != null ? f[1] : "", 2, 30);
+            area.setLineWrap(true);
+            area.setWrapStyleWord(true);
+            fieldAreas.add(area);
+            gbc.gridx = 1; gbc.weightx = 1;
+            form.add(new JScrollPane(area), gbc);
+            row++;
+        }
+
+        // Member profiles section
+        gbc.gridx = 0; gbc.gridy = row; gbc.gridwidth = 2; gbc.weightx = 1;
+        JPanel profilesPanel = new JPanel(new BorderLayout(4, 4));
+        profilesPanel.setBorder(BorderFactory.createTitledBorder("Member/Officer Profiles"));
+        DefaultListModel<String> profileModel = new DefaultListModel<>();
+        if (orgCtx.getMemberProfiles() != null) {
+            for (OrganizationContext.MemberProfile mp : orgCtx.getMemberProfiles()) {
+                profileModel.addElement(mp.getName() + " - " + mp.getRole());
+            }
+        }
+        JList<String> profileList = new JList<>(profileModel);
+        profileList.setVisibleRowCount(4);
+        profilesPanel.add(new JScrollPane(profileList), BorderLayout.CENTER);
+
+        JPanel profileBtns = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        JButton addProfile = new JButton("Add");
+        addProfile.addActionListener(e -> {
+            String name = JOptionPane.showInputDialog(panel, "Member name:");
+            if (name == null || name.isBlank()) return;
+            String role = JOptionPane.showInputDialog(panel, "Role/Title:");
+            String details = JOptionPane.showInputDialog(panel, "Details (skills, responsibilities, notes):");
+            OrganizationContext.MemberProfile mp = new OrganizationContext.MemberProfile(
+                    name.trim(), role != null ? role.trim() : "", details != null ? details.trim() : "");
+            orgCtx.addMemberProfile(mp);
+            profileModel.addElement(mp.getName() + " - " + mp.getRole());
+        });
+        JButton removeProfile = new JButton("Remove");
+        removeProfile.addActionListener(e -> {
+            int idx = profileList.getSelectedIndex();
+            if (idx >= 0) {
+                orgCtx.removeMemberProfile(idx);
+                profileModel.remove(idx);
+            }
+        });
+        profileBtns.add(addProfile);
+        profileBtns.add(removeProfile);
+        profilesPanel.add(profileBtns, BorderLayout.SOUTH);
+        form.add(profilesPanel, gbc);
+
+        JScrollPane formScroll = new JScrollPane(form);
+        panel.add(formScroll, BorderLayout.CENTER);
+
+        // Save button
+        JPanel bottom = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JButton saveBtn = new JButton("Save Organization Context");
+        saveBtn.addActionListener(e -> {
+            orgCtx.setLastUpdated(fieldAreas.get(0).getText().trim());
+            orgCtx.setWhatChangedSinceLastUpdate(fieldAreas.get(1).getText().trim());
+            orgCtx.setCurrentTermDateRange(fieldAreas.get(2).getText().trim());
+            orgCtx.setTopPriorities(fieldAreas.get(3).getText().trim());
+            orgCtx.setActiveInitiativesAndStatus(fieldAreas.get(4).getText().trim());
+            orgCtx.setUpcomingDeadlinesAndEvents(fieldAreas.get(5).getText().trim());
+            orgCtx.setCurrentMetrics(fieldAreas.get(6).getText().trim());
+            orgCtx.setOfficerRosterAndOwnership(fieldAreas.get(7).getText().trim());
+            orgCtx.setKeyPartnersStakeholders(fieldAreas.get(8).getText().trim());
+            orgCtx.setCurrentBlockersRisks(fieldAreas.get(9).getText().trim());
+            orgCtx.setPendingDecisions(fieldAreas.get(10).getText().trim());
+            orgCtx.setPreferredToneStyle(fieldAreas.get(11).getText().trim());
+            orgCtx.save();
+            JOptionPane.showMessageDialog(panel, "Organization context saved.",
+                    "Saved", JOptionPane.INFORMATION_MESSAGE);
+        });
+        bottom.add(saveBtn);
+        panel.add(bottom, BorderLayout.SOUTH);
 
         return panel;
     }
@@ -359,6 +475,14 @@ public class ContextControlDialog extends JDialog {
                     && activeProfileSet.getStakeholders() != null
                     && !activeProfileSet.getStakeholders().isEmpty()) {
                 sb.append(activeProfileSet.getStakeholders().get(0).toBriefing());
+            } else {
+                sb.append("(disabled)\n");
+            }
+            sb.append("\n");
+
+            sb.append("=== ORGANIZATION CONTEXT ===\n");
+            if (controller.shouldIncludeOrgContext()) {
+                sb.append(controller.getEffectiveOrgContext());
             } else {
                 sb.append("(disabled)\n");
             }

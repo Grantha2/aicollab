@@ -21,12 +21,16 @@ public class ContextController {
     private boolean includeStakeholderProfile = true;
     private boolean includeHistory = true;
     private boolean includeTaskContext = true;
+    private boolean includeOrgContext = true;
 
     // null = use default from PromptBuilder
     private String teamContextOverride = null;
 
     // Active task context (set when a task button is clicked)
     private TaskContext activeTaskContext = null;
+
+    // Organization context (shared, persistent)
+    private OrganizationContext organizationContext = OrganizationContext.load();
 
     // Per-model agent identity toggles (model name → enabled)
     private final Map<String, Boolean> agentToggles = new HashMap<>();
@@ -39,12 +43,25 @@ public class ContextController {
     public boolean shouldIncludeStakeholderProfile() { return includeStakeholderProfile; }
     public boolean shouldIncludeHistory()           { return includeHistory; }
     public boolean shouldIncludeTaskContext()       { return includeTaskContext; }
+    public boolean shouldIncludeOrgContext()        { return includeOrgContext; }
 
     public void setIncludeTeamContext(boolean v)       { this.includeTeamContext = v; }
     public void setIncludeAgentIdentity(boolean v)     { this.includeAgentIdentity = v; }
     public void setIncludeStakeholderProfile(boolean v) { this.includeStakeholderProfile = v; }
     public void setIncludeHistory(boolean v)           { this.includeHistory = v; }
     public void setIncludeTaskContext(boolean v)       { this.includeTaskContext = v; }
+    public void setIncludeOrgContext(boolean v)        { this.includeOrgContext = v; }
+
+    public OrganizationContext getOrganizationContext()              { return organizationContext; }
+    public void setOrganizationContext(OrganizationContext ctx)      { this.organizationContext = ctx; }
+
+    /**
+     * Returns the org context block if enabled, empty string otherwise.
+     */
+    public String getEffectiveOrgContext() {
+        if (!includeOrgContext || organizationContext == null) return "";
+        return organizationContext.buildContextBlock();
+    }
 
     public TaskContext getActiveTaskContext()          { return activeTaskContext; }
     public void setActiveTaskContext(TaskContext ctx)  { this.activeTaskContext = ctx; }
