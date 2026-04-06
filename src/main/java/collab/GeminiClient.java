@@ -229,6 +229,12 @@ public class GeminiClient implements LlmClient {
             HttpResponse<String> response = httpClient.send(httpReq,
                     HttpResponse.BodyHandlers.ofString());
 
+            if (response.statusCode() == 503) {
+                return new StatefulResponse(
+                        "[Gemini temporarily unavailable] This model is currently experiencing high demand. Please try again later.",
+                        null);
+            }
+
             if (response.statusCode() != 200) {
                 throw new RuntimeException("HTTP " + response.statusCode()
                         + ": " + response.body());
