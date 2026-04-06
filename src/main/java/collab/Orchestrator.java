@@ -67,6 +67,11 @@ public class Orchestrator {
     private final int debateRounds;
     private final int configuredMaxTokens;
 
+    // The currently logged-in user session, used for attribution
+    // when storing synthesis reports. Null if no RBAC session is active
+    // (backward compatibility with the old stakeholder-only flow).
+    private UserSession activeSession;
+
     // ============================================================
     // Constructor — wires together all the pieces.
     //
@@ -88,6 +93,16 @@ public class Orchestrator {
         this.context = context;
         this.debateRounds = debateRounds;
         this.configuredMaxTokens = configuredMaxTokens;
+    }
+
+    // ============================================================
+    // setActiveSession() — Sets the current user session for
+    // attribution tagging on synthesis reports.
+    //
+    // Called by Main.java after login and on user switch.
+    // ============================================================
+    public void setActiveSession(UserSession session) {
+        this.activeSession = session;
     }
 
     // ============================================================
@@ -283,7 +298,12 @@ public class Orchestrator {
 
         // Store the synthesis in conversation memory so the next cycle
         // can reference what was discussed in this one.
-        context.addSynthesis(synthesis);
+        // If a UserSession is available, tag the synthesis with contributor info.
+        if (activeSession != null) {
+            context.addSynthesis(synthesis, activeSession);
+        } else {
+            context.addSynthesis(synthesis);
+        }
     }
 
     // ============================================================

@@ -4,8 +4,9 @@ package collab;
 // Main.java — Entry point for the AI Collaboration Platform.
 //
 // WHAT THIS FILE DOES (one sentence):
-// Reads user input, manages the hotseat menu, and calls the
-// Orchestrator — it's the front door, not the brain.
+// Handles user login (name + role selection), displays the
+// role-filtered functional area menu, reads prompts, and calls
+// the Orchestrator — it's the front door, not the brain.
 //
 // HOW IT FITS THE ARCHITECTURE:
 // Main.java is the first file a new team member should read.
@@ -17,13 +18,14 @@ package collab;
 //   OpenAiClient    → GPT API (implements LlmClient)
 //   GeminiClient    → Gemini API (implements LlmClient)
 //   AgentProfile    → each model's identity and perspective
-//   StakeholderProfile → each human team member's profile
+//   OfficerRole     → IDSSO officer positions + permissions
+//   FunctionalArea  → the "buttons" each role can access
+//   UserSession     → logged-in user identity + role
+//   Contribution    → tagged context record (who, what, when)
+//   SessionStore    → JSON persistence for contributions
 //   ConversationContext → memory across debate cycles
 //   PromptBuilder   → assembles the layered "onion" prompts
 //   Orchestrator    → runs the 3-phase debate cycle
-//
-// Main.java creates all of these, wires them together, and then
-// runs a loop: pick a stakeholder, type a prompt, confirm, debate.
 //
 // HOW TO RUN:
 //   Option A (Maven):  mvn compile exec:java
@@ -45,24 +47,16 @@ public class Main {
         // ==========================
         // STEP 1: LOAD CONFIGURATION
         // ==========================
-        // Config reads API keys and settings from config.properties.
-        // If the file doesn't exist, it walks you through first-time setup.
         Config config = new Config("config.properties");
 
         // ==========================
         // STEP 2: CREATE SHARED HTTP CLIENT
         // ==========================
-        // One HttpClient instance, shared by all three API clients.
-        // Creating a new one each time wastes resources (connection pools,
-        // thread pools). This is a standard Java pattern.
         HttpClient httpClient = HttpClient.newHttpClient();
 
         // ==========================
         // STEP 3: CREATE THE THREE AI CLIENTS
         // ==========================
-        // Each client implements LlmClient (the interface). The Orchestrator
-        // doesn't know or care which provider is behind each one — it just
-        // calls sendMessage(). This is the power of the interface pattern.
         int maxTokens = config.getMaxResponseTokens();
 
         LlmClient claudeClient = new AnthropicClient(
@@ -80,35 +74,22 @@ public class Main {
         // ==========================
         // STEP 4: CREATE AGENT PROFILES
         // ==========================
-        // Each AI model gets a distinct identity: Claude focuses on
-        // architecture & quality, GPT on ideas & possibilities, Gemini
-        // on execution & delivery. These shape how each model responds.
         List<AgentProfile> agents = AgentProfile.getDefaults();
         AgentProfile claudeAgent = agents.get(0);
         AgentProfile gptAgent    = agents.get(1);
         AgentProfile geminiAgent = agents.get(2);
 
         // ==========================
-        // STEP 5: LOAD STAKEHOLDER PROFILES
+        // STEP 5: CREATE MEMORY, PERSISTENCE, AND PROMPT BUILDER
         // ==========================
-        // The four team members. The user picks one before each cycle
-        // (the "hotseat"), and that profile gets injected into every prompt.
-        List<StakeholderProfile> stakeholders = StakeholderProfile.getDefaults();
-
-        // ==========================
-        // STEP 6: CREATE MEMORY AND PROMPT BUILDER
-        // ==========================
-        // ConversationContext stores synthesis reports from past cycles.
-        // PromptBuilder uses it to include history in future prompts.
         ConversationContext context = new ConversationContext(config.getMaxHistoryChars());
+        SessionStore sessionStore = new SessionStore();
+        List<Contribution> allContributions = sessionStore.loadContributions();
         PromptBuilder promptBuilder = new PromptBuilder(context);
 
         // ==========================
-        // STEP 7: CREATE THE ORCHESTRATOR
+        // STEP 6: CREATE THE ORCHESTRATOR
         // ==========================
-        // The Orchestrator is the brain — it runs the 3-phase debate.
-        // We pass it everything it needs: clients, agents, prompt builder,
-        // memory, and how many debate rounds to run.
         Orchestrator orchestrator = new Orchestrator(
                 claudeClient, gptClient, geminiClient,
                 claudeAgent, gptAgent, geminiAgent,
@@ -116,58 +97,67 @@ public class Main {
                 config.getDebateRounds(), maxTokens);
 
         // ==========================
-        // STEP 8: RUN THE CLI LOOP
+        // STEP 7: RUN THE CLI LOOP
         // ==========================
         Scanner scanner = new Scanner(System.in);
         int cycleCount = 0;
-        int activeStakeholderIndex = 0;
 
         System.out.println("========================================");
-        System.out.println("  AI Collaboration Platform v0.4");
+        System.out.println("  AI Collaboration Platform v0.5");
+        System.out.println("  IDSSO Role-Based Access Control");
         System.out.println("  Full Debate Cycle: 3 Models + Synthesis");
         System.out.println("  Each cycle makes " + orchestrator.getApiCallCount() + " API calls.");
         System.out.println("  Type 'quit' to exit.");
         System.out.println("========================================");
 
-        // --- STAKEHOLDER SELECTION (the "hotseat") ---
-        // Before any prompts, the user picks which team member they are.
-        activeStakeholderIndex = selectStakeholder(scanner, stakeholders, activeStakeholderIndex);
+        // --- USER LOGIN ---
+        // User identifies themselves by name and selects their IDSSO role.
+        // This determines which functional areas ("buttons") they can access.
+        UserSession session = login(scanner);
+        orchestrator.setActiveSession(session);
 
         while (true) {
 
-            // Show who's in the hotseat and get their prompt
-            StakeholderProfile active = stakeholders.get(activeStakeholderIndex);
+            // Show who's logged in
             System.out.println();
-            System.out.println("[" + active.getName() + " \u2014 " + active.getRole() + "]");
+            System.out.println("[" + session.getUserName() + " \u2014 "
+                    + session.getRole().getDisplayName() + "]");
 
             // Show memory status if the panel has context from previous cycles
             if (context.getCycleCount() > 0) {
-                System.out.println("(Panel has context from " + context.getCycleCount() + " previous cycle"
+                System.out.println("(Panel has context from " + context.getCycleCount()
+                        + " previous cycle"
                         + (context.getCycleCount() == 1 ? "" : "s") + ")");
             }
 
+            // Show contribution count if there are prior contributions
+            if (!allContributions.isEmpty()) {
+                System.out.println("(Total contributions on record: "
+                        + allContributions.size() + ")");
+            }
+
             System.out.println("(Commands: 'switch', 'quit')");
+
+            // --- FUNCTIONAL AREA SELECTION ---
+            // Show only the areas this role can access, grouped by category.
+            FunctionalArea selectedArea = selectFunctionalArea(scanner, session);
+            if (selectedArea == null) {
+                // User typed 'quit' or 'switch' during area selection
+                // We handle these via sentinel returns — see selectFunctionalArea()
+                continue;
+            }
+
+            System.out.println("Selected area: " + selectedArea.getDisplayName());
             System.out.println("Enter your prompt (type SEND on its own line to submit):");
 
             // ============================================================
             // MULTI-LINE INPUT COLLECTION
-            //
-            // WHY NOT JUST scanner.nextLine()?
-            // Terminal input reads one line at a time. If the user pastes
-            // a multi-paragraph prompt, each line fires separately. We
-            // collect lines into a StringBuilder until the user types
-            // "SEND" on its own line. This means:
-            //   - Pasting multi-line text works perfectly
-            //   - Blank lines within the prompt are preserved
-            //   - Only an explicit "SEND" triggers the debate cycle
             // ============================================================
-
             StringBuilder inputBuilder = new StringBuilder();
             while (true) {
                 String line = scanner.nextLine();
 
-                // Check for commands ONLY on the first line (before any
-                // content has been entered).
+                // Check for commands ONLY on the first line
                 if (inputBuilder.isEmpty()) {
                     if (line.trim().equalsIgnoreCase("quit")) {
                         inputBuilder.append("__QUIT__");
@@ -179,7 +169,6 @@ public class Main {
                     }
                 }
 
-                // "SEND" on its own line = done collecting input
                 if (line.trim().equalsIgnoreCase("SEND")) {
                     break;
                 }
@@ -199,7 +188,8 @@ public class Main {
             }
 
             if (userPrompt.equals("__SWITCH__")) {
-                activeStakeholderIndex = selectStakeholder(scanner, stakeholders, activeStakeholderIndex);
+                session = login(scanner);
+                orchestrator.setActiveSession(session);
                 continue;
             }
 
@@ -215,9 +205,12 @@ public class Main {
                     ? userPrompt.substring(0, 100) + "..."
                     : userPrompt;
             System.out.println();
-            System.out.println("Stakeholder: " + active.getName() + " (" + active.getRole() + ")");
+            System.out.println("User: " + session.getUserName()
+                    + " (" + session.getRole().getDisplayName() + ")");
+            System.out.println("Area: " + selectedArea.getDisplayName());
             System.out.println("Prompt preview: " + preview);
-            System.out.println("This will run a full debate cycle (" + orchestrator.getApiCallCount() + " API calls).");
+            System.out.println("This will run a full debate cycle ("
+                    + orchestrator.getApiCallCount() + " API calls).");
             System.out.print("Proceed? (y/n): ");
             String confirm = scanner.nextLine().trim().toLowerCase();
 
@@ -226,20 +219,38 @@ public class Main {
                 continue;
             }
 
-            // Run the debate!
-            orchestrator.runDebate(userPrompt, active);
+            // --- TAG THE CONTRIBUTION ---
+            // Record WHO is providing this context, WHAT area it's about,
+            // and WHEN it was submitted. This feeds into the centralized
+            // conversation history with full attribution.
+            Contribution contribution = new Contribution(
+                    session.getUserName(),
+                    session.getRole().getDisplayName(),
+                    selectedArea,
+                    userPrompt,
+                    System.currentTimeMillis()
+            );
+            context.addContribution(contribution);
+            sessionStore.appendContribution(contribution, allContributions);
+
+            // --- RUN THE DEBATE ---
+            // The StakeholderProfile is generated from the UserSession,
+            // bridging the RBAC system to the existing prompt pipeline.
+            StakeholderProfile activeProfile = session.toStakeholderProfile();
+            orchestrator.runDebate(userPrompt, activeProfile);
             cycleCount++;
 
             // ============================================================
             // POST-CYCLE PAUSE
-            //
-            // After a cycle completes, show a clear separator and the
-            // running total. Wait for explicit "Enter" before continuing.
             // ============================================================
             System.out.println();
             System.out.println("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
             System.out.println("  Cycle complete. Total cycles run: " + cycleCount);
-            System.out.println("  Estimated API calls this session: " + (cycleCount * orchestrator.getApiCallCount()));
+            System.out.println("  Estimated API calls this session: "
+                    + (cycleCount * orchestrator.getApiCallCount()));
+            System.out.println("  Contribution by: " + session.getUserName()
+                    + " (" + session.getRole().getDisplayName() + ")");
+            System.out.println("  Area: " + selectedArea.getDisplayName());
             System.out.println("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
             System.out.println();
             System.out.print("Press Enter to continue (or type 'quit'): ");
@@ -256,59 +267,118 @@ public class Main {
 
 
     // ============================================================
-    // selectStakeholder() — Displays the profile menu and lets
-    // the user pick which stakeholder is in the "hotseat."
+    // login() — Prompts the user for their name and IDSSO role.
     //
-    // LEARNING POINT: This is a simple menu pattern. The user sees
-    // a numbered list, types a number, and we validate the input.
-    // In a web version, this would be a dropdown or user login.
+    // This creates a UserSession that determines which functional
+    // areas the user can access and tags all their contributions.
     //
-    // PARAMETERS:
-    //   scanner      — for reading user input
-    //   stakeholders — the list of available profiles
-    //   current      — the current selection index (kept if input is invalid)
+    // In a web version, this would be a login form. For now, it's
+    // a simple name entry + numbered role menu. No password — this
+    // is honest attribution for a university project, not security.
     //
-    // RETURNS: the new active stakeholder index
+    // RETURNS: a new UserSession with the selected identity and role
     // ============================================================
-    private static int selectStakeholder(Scanner scanner,
-                                         List<StakeholderProfile> stakeholders,
-                                         int current) {
+    private static UserSession login(Scanner scanner) {
         System.out.println();
         System.out.println("\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557");
-        System.out.println("\u2551   Select Active Stakeholder          \u2551");
+        System.out.println("\u2551   IDSSO Officer Login                \u2551");
         System.out.println("\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d");
         System.out.println();
 
-        for (int i = 0; i < stakeholders.size(); i++) {
-            StakeholderProfile p = stakeholders.get(i);
-            System.out.println("  " + (i + 1) + ". " + p.getName() + " \u2014 " + p.getRole()
-                    + " (" + p.getFocusArea() + ")");
+        System.out.print("Enter your name: ");
+        String name = scanner.nextLine().trim();
+        while (name.isEmpty()) {
+            System.out.print("Name cannot be empty. Enter your name: ");
+            name = scanner.nextLine().trim();
         }
 
         System.out.println();
-        System.out.print("Enter number (1-" + stakeholders.size() + "): ");
+        System.out.println("Select your IDSSO role:");
+        OfficerRole[] roles = OfficerRole.values();
+        for (int i = 0; i < roles.length; i++) {
+            System.out.println("  " + (i + 1) + ". " + roles[i].getDisplayName());
+        }
+
+        System.out.println();
+        System.out.print("Enter number (1-" + roles.length + "): ");
+
+        OfficerRole selectedRole = null;
+        while (selectedRole == null) {
+            String input = scanner.nextLine().trim();
+            try {
+                int choice = Integer.parseInt(input) - 1;
+                if (choice >= 0 && choice < roles.length) {
+                    selectedRole = roles[choice];
+                } else {
+                    System.out.print("Invalid choice. Enter number (1-" + roles.length + "): ");
+                }
+            } catch (NumberFormatException e) {
+                System.out.print("Invalid input. Enter number (1-" + roles.length + "): ");
+            }
+        }
+
+        UserSession session = new UserSession(name, selectedRole);
+        System.out.println();
+        System.out.println("Logged in as: " + name + " \u2014 " + selectedRole.getDisplayName());
+        System.out.println("You have access to " + session.getAccessibleAreas().size()
+                + " functional area(s).");
+
+        return session;
+    }
+
+
+    // ============================================================
+    // selectFunctionalArea() — Displays the role-filtered menu of
+    // functional areas and lets the user pick one.
+    //
+    // Only shows areas the current user's role can access, grouped
+    // by category (Internal Administration, Membership, etc.).
+    //
+    // RETURNS: the selected FunctionalArea, or null if the user
+    //          typed a command ('quit' or 'switch') instead
+    // ============================================================
+    private static FunctionalArea selectFunctionalArea(Scanner scanner,
+                                                       UserSession session) {
+        List<FunctionalArea> areas = session.getAccessibleAreas();
+
+        System.out.println();
+        System.out.println("Select a functional area:");
+
+        // Group by category for clean display
+        String currentCategory = "";
+        for (int i = 0; i < areas.size(); i++) {
+            FunctionalArea area = areas.get(i);
+            if (!area.getCategory().equals(currentCategory)) {
+                currentCategory = area.getCategory();
+                System.out.println("  " + currentCategory + ":");
+            }
+            System.out.println("    " + (i + 1) + ". " + area.getDisplayName());
+        }
+
+        System.out.println();
+        System.out.print("Enter number (1-" + areas.size() + "): ");
         String input = scanner.nextLine().trim();
+
+        // Allow commands during area selection
+        if (input.equalsIgnoreCase("quit")) {
+            System.out.println("Goodbye!");
+            System.exit(0);
+        }
+        if (input.equalsIgnoreCase("switch")) {
+            return null;  // signal to Main loop to re-run login
+        }
 
         try {
             int choice = Integer.parseInt(input) - 1;
-
-            if (choice >= 0 && choice < stakeholders.size()) {
-                StakeholderProfile selected = stakeholders.get(choice);
-                System.out.println();
-                System.out.println("Active stakeholder: " + selected.getName()
-                        + " \u2014 " + selected.getRole());
-                System.out.println("KPIs: " + selected.getEvaluatedOn());
-                System.out.println("Authority: " + selected.getResponsibilities());
-                return choice;
+            if (choice >= 0 && choice < areas.size()) {
+                return areas.get(choice);
             } else {
-                System.out.println("Invalid choice. Keeping current: "
-                        + stakeholders.get(current).getName());
+                System.out.println("Invalid choice. Please try again.");
+                return selectFunctionalArea(scanner, session);
             }
         } catch (NumberFormatException e) {
-            System.out.println("Invalid input. Keeping current: "
-                    + stakeholders.get(current).getName());
+            System.out.println("Invalid input. Please try again.");
+            return selectFunctionalArea(scanner, session);
         }
-
-        return current;
     }
 }

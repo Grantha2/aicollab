@@ -42,6 +42,11 @@ public class ConversationContext {
     // The oldest entry is at index 0; newest is at the end.
     private final List<String> syntheses = new ArrayList<>();
 
+    // Structured contributions tagged with who provided them.
+    // This tracks every piece of context any user has contributed,
+    // with full attribution (name, role, area, timestamp).
+    private final List<Contribution> contributions = new ArrayList<>();
+
     // Maximum total characters across all stored syntheses.
     // When exceeded, we remove the oldest entries first.
     private final int maxHistoryChars;
@@ -69,6 +74,48 @@ public class ConversationContext {
     public void addSynthesis(String synthesis) {
         syntheses.add(synthesis);
         trimHistory();
+    }
+
+    // ============================================================
+    // addSynthesis() — Overloaded version that tags the synthesis
+    // with WHO contributed it (name and role).
+    //
+    // This is the preferred method when a UserSession is available.
+    // The tag is prepended to the synthesis text so it appears in
+    // the history block and the AI panel knows who contributed it.
+    //
+    // PARAMETERS:
+    //   synthesis   — the synthesis report text from the debate
+    //   contributor — the logged-in user who initiated this cycle
+    // ============================================================
+    public void addSynthesis(String synthesis, UserSession contributor) {
+        String tagged = "[Contributed by: " + contributor.getUserName()
+                + " (" + contributor.getRole().getDisplayName() + ")]\n"
+                + synthesis;
+        syntheses.add(tagged);
+        trimHistory();
+    }
+
+    // ============================================================
+    // addContribution() — Stores a structured Contribution record
+    // for attribution tracking.
+    //
+    // Called by Main.java after each prompt submission, BEFORE the
+    // debate cycle runs. This records the raw user input with full
+    // identity metadata.
+    // ============================================================
+    public void addContribution(Contribution contribution) {
+        contributions.add(contribution);
+    }
+
+    // ============================================================
+    // getContributions() — Returns all stored contributions.
+    //
+    // Used by SessionStore for persistence and by any future
+    // reporting/analytics features.
+    // ============================================================
+    public List<Contribution> getContributions() {
+        return new ArrayList<>(contributions);
     }
 
     // ============================================================
