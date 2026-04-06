@@ -32,14 +32,27 @@ public class DailyContextUpdateFunction {
     }
 
     /**
-     * Builds the prompt for the daily context update function.
-     * Includes stale field current values and asks AI to propose updates.
-     *
-     * @param targetFields specific fields to update (null = all stale/aging fields)
-     * @param userInput    free-text from user about what changed
-     * @return the assembled prompt to send to Claude
+     * Builds the prompt with a single user input string (legacy).
      */
     public String buildPrompt(List<String> targetFields, String userInput) {
+        Map<String, String> perField = null;
+        if (userInput != null && !userInput.isBlank()) {
+            // Wrap single input as a general note
+            perField = Map.of("_general", userInput);
+        }
+        return buildPrompt(targetFields, perField);
+    }
+
+    /**
+     * Builds the prompt for the daily context update function.
+     * Includes stale field current values and per-field user notes.
+     *
+     * @param targetFields   specific fields to update (null = all stale/aging fields)
+     * @param perFieldInput  per-field user notes (fieldName -> what changed). May be null.
+     *                       Key "_general" is treated as a general note for all fields.
+     * @return the assembled prompt to send to Claude
+     */
+    public String buildPrompt(List<String> targetFields, Map<String, String> perFieldInput) {
         Map<String, Freshness> freshnessReport = orgContext.getFreshnessReport();
 
         // Determine which fields to include
@@ -66,12 +79,12 @@ public class DailyContextUpdateFunction {
             update structured organizational context fields based on what the user tells you.
 
             Below are the current values of context fields that need refreshing. The user \
-            will describe what has changed. Based on their input, produce updated values \
-            for any fields that should change.
+            may provide specific update notes per field. Based on their input, produce \
+            updated values for any fields that should change.
 
             IMPORTANT: Return your response as a JSON array of update objects. Each object has:
             - "field": the exact field name (from the list below)
-            - "value": the updated value for that field
+            - "value": the complete updated value for that field (not just the delta)
             - "reason": brief explanation of what changed
 
             Only include fields that actually need updating based on the user's input. \
@@ -95,11 +108,20 @@ public class DailyContextUpdateFunction {
             prompt.append("\nFreshness: ").append(freshness);
             prompt.append("\nLast Updated: ").append(lastUpdated);
             prompt.append("\nCurrent Value: ").append(currentValue.isBlank() ? "(empty)" : currentValue);
+
+            // Include per-field user note if provided
+            if (perFieldInput != null && perFieldInput.containsKey(fieldName)) {
+                prompt.append("\nUser Note: ").append(perFieldInput.get(fieldName));
+            }
+
             prompt.append("\n---");
         }
 
-        prompt.append("\n\n=== USER UPDATE ===\n");
-        prompt.append(userInput != null ? userInput : "(No specific update provided. Review fields and suggest any needed changes based on the current values and dates.)");
+        // Include general note if provided
+        if (perFieldInput != null && perFieldInput.containsKey("_general")) {
+            prompt.append("\n\n=== GENERAL USER NOTE ===\n");
+            prompt.append(perFieldInput.get("_general"));
+        }
 
         return prompt.toString();
     }
@@ -143,18 +165,29 @@ public class DailyContextUpdateFunction {
     }
 
     /**
-     * Full execution: build prompt, call API, parse response, reconcile.
-     * Returns the reconciliation result.
-     *
-     * @param client       the LLM client to use (Claude)
-     * @param targetFields specific fields to update (null = all stale)
-     * @param userInput    what the user says changed
-     * @return reconciliation result, or null if nothing to update
+     * Full execution with single user input string (legacy).
      */
     public ReconciliationService.ReconciliationResult execute(
             LlmClient client, List<String> targetFields, String userInput) {
+        Map<String, String> perField = null;
+        if (userInput != null && !userInput.isBlank()) {
+            perField = Map.of("_general", userInput);
+        }
+        return execute(client, targetFields, perField);
+    }
 
-        String prompt = buildPrompt(targetFields, userInput);
+    /**
+     * Full execution: build prompt, call API, parse response, reconcile.
+     *
+     * @param client        the LLM client to use (Claude)
+     * @param targetFields  specific fields to update (null = all stale)
+     * @param perFieldInput per-field user notes (fieldName -> what changed)
+     * @return reconciliation result, or null if nothing to update
+     */
+    public ReconciliationService.ReconciliationResult execute(
+            LlmClient client, List<String> targetFields, Map<String, String> perFieldInput) {
+
+        String prompt = buildPrompt(targetFields, perFieldInput);
         if (prompt == null) return null;
 
         String response = client.sendMessage(prompt);

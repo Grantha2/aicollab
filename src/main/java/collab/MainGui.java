@@ -317,7 +317,12 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             changeLog = new ContextChangeLog();
             reconciliationService = new ReconciliationService(orgCtx, changeLog);
             dailyUpdateFn = new DailyContextUpdateFunction(orgCtx, reconciliationService);
-            agenticPanel = new AgenticRoutinesPanel(orgCtx, reconciliationService, dailyUpdateFn, config);
+
+            // Build task registry with built-in tasks
+            AgenticTaskRegistry taskRegistry = new AgenticTaskRegistry();
+            taskRegistry.register(new ContextRefreshTask(dailyUpdateFn));
+
+            agenticPanel = new AgenticRoutinesPanel(orgCtx, reconciliationService, changeLog, config, taskRegistry);
 
             // Replace placeholder with real agentic panel
             viewContainer.remove(viewContainer.getComponentCount() - 1);

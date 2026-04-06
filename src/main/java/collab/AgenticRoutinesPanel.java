@@ -1,21 +1,20 @@
 package collab;
 
 // ============================================================
-// AgenticRoutinesPanel.java — Agentic Tab workspace with
-// context health sidebar and function output / approval queue.
+// AgenticRoutinesPanel.java — Agentic Tab workspace with task
+// registry sidebar, context health checkboxes, and function
+// output / approval queue.
 //
 // WHAT THIS CLASS DOES (one sentence):
-// Displays context freshness as an actionable sidebar with
-// per-field checkboxes, runs agentic functions, and shows
-// approval diff cards for context write-back.
+// Renders registered agentic tasks and context health in a sidebar,
+// executes tasks on demand, and displays results with approval cards.
 //
 // KEY DESIGN DECISIONS:
-// - Context health IS the entry point to refresh flows (not passive)
-// - Per-field checkboxes let users select exactly which fields to refresh
-// - Stale fields grouped at top to drive action
-// - Approval cards show current vs proposed with approve/reject
+// - Task list at top of sidebar (from AgenticTaskRegistry)
+// - Context health below with per-field checkboxes
+// - "Refresh Selected" feeds checked fields into ContextRefreshTask
+// - Tasks call back to this panel for output display and approvals
 // - Session-start trigger checks for stale context on first view
-// - Runs Daily Update function via SwingWorker to avoid blocking
 // ============================================================
 
 import javax.swing.*;
@@ -28,11 +27,12 @@ public class AgenticRoutinesPanel extends JPanel {
 
     private final OrganizationContext orgContext;
     private final ReconciliationService reconciliation;
-    private final DailyContextUpdateFunction dailyUpdateFn;
+    private final ContextChangeLog changeLog;
     private final Config config;
+    private final AgenticTaskRegistry taskRegistry;
 
     // UI components
-    private final JPanel healthPanel;       // left sidebar: freshness indicators
+    private final JPanel sidebarContent;    // left sidebar content (tasks + health)
     private final JPanel mainPanel;         // right: function output + approvals
     private final JPanel outputArea;        // function output text
     private final JPanel approvalArea;      // approval diff cards
@@ -47,12 +47,14 @@ public class AgenticRoutinesPanel extends JPanel {
 
     public AgenticRoutinesPanel(OrganizationContext orgContext,
                                  ReconciliationService reconciliation,
-                                 DailyContextUpdateFunction dailyUpdateFn,
-                                 Config config) {
+                                 ContextChangeLog changeLog,
+                                 Config config,
+                                 AgenticTaskRegistry taskRegistry) {
         this.orgContext = orgContext;
         this.reconciliation = reconciliation;
-        this.dailyUpdateFn = dailyUpdateFn;
+        this.changeLog = changeLog;
         this.config = config;
+        this.taskRegistry = taskRegistry;
 
         setLayout(new BorderLayout());
         setBackground(new Color(245, 245, 250));
@@ -71,20 +73,21 @@ public class AgenticRoutinesPanel extends JPanel {
         statusLabel.setForeground(new Color(100, 100, 110));
         add(statusLabel, BorderLayout.SOUTH);
 
-        // Left sidebar: context health with checkboxes
+        // Left sidebar
         JPanel leftPanel = new JPanel(new BorderLayout());
         leftPanel.setBackground(Color.WHITE);
         leftPanel.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, new Color(220, 220, 230)));
 
-        healthPanel = new JPanel();
-        healthPanel.setLayout(new BoxLayout(healthPanel, BoxLayout.Y_AXIS));
-        healthPanel.setBackground(Color.WHITE);
-        healthPanel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        sidebarContent = new JPanel();
+        sidebarContent.setLayout(new BoxLayout(sidebarContent, BoxLayout.Y_AXIS));
+        sidebarContent.setBackground(Color.WHITE);
+        sidebarContent.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
-        JScrollPane healthScroll = new JScrollPane(healthPanel);
-        healthScroll.setBorder(null);
-        healthScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        leftPanel.add(healthScroll, BorderLayout.CENTER);
+        JScrollPane sidebarScroll = new JScrollPane(sidebarContent);
+        sidebarScroll.setBorder(null);
+        sidebarScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        sidebarScroll.getVerticalScrollBar().setUnitIncrement(16);
+        leftPanel.add(sidebarScroll, BorderLayout.CENTER);
 
         // Bottom button bar for sidebar
         JPanel sidebarButtons = new JPanel();
@@ -97,26 +100,10 @@ public class AgenticRoutinesPanel extends JPanel {
 
         refreshSelectedBtn = new JButton("Refresh Selected");
         refreshSelectedBtn.setAlignmentX(LEFT_ALIGNMENT);
-        refreshSelectedBtn.setMaximumSize(new Dimension(240, 30));
+        refreshSelectedBtn.setMaximumSize(new Dimension(250, 30));
         refreshSelectedBtn.setEnabled(false);
         refreshSelectedBtn.addActionListener(e -> onRefreshSelected());
         sidebarButtons.add(refreshSelectedBtn);
-        sidebarButtons.add(Box.createVerticalStrut(4));
-
-        JButton selectAllStaleBtn = new JButton("Select All Stale");
-        selectAllStaleBtn.setAlignmentX(LEFT_ALIGNMENT);
-        selectAllStaleBtn.setMaximumSize(new Dimension(240, 26));
-        selectAllStaleBtn.setFont(selectAllStaleBtn.getFont().deriveFont(11f));
-        selectAllStaleBtn.addActionListener(e -> selectAllStale());
-        sidebarButtons.add(selectAllStaleBtn);
-        sidebarButtons.add(Box.createVerticalStrut(4));
-
-        JButton dailyUpdateBtn = new JButton("Daily Update (All)");
-        dailyUpdateBtn.setAlignmentX(LEFT_ALIGNMENT);
-        dailyUpdateBtn.setMaximumSize(new Dimension(240, 26));
-        dailyUpdateBtn.setFont(dailyUpdateBtn.getFont().deriveFont(11f));
-        dailyUpdateBtn.addActionListener(e -> onDailyUpdate(null));
-        sidebarButtons.add(dailyUpdateBtn);
 
         leftPanel.add(sidebarButtons, BorderLayout.SOUTH);
         leftPanel.setPreferredSize(new Dimension(270, 0));
@@ -154,21 +141,16 @@ public class AgenticRoutinesPanel extends JPanel {
         add(split, BorderLayout.CENTER);
 
         // Initial render
-        refreshHealthPanel();
+        rebuildSidebar();
         showEmptyState();
     }
 
     // ===================== Session-Start Trigger =====================
 
-    /**
-     * Called when the agentic tab becomes visible. Checks for stale context
-     * and prompts the user if a refresh is recommended.
-     */
     public void onTabShown() {
         if (sessionStartCheckDone) return;
         sessionStartCheckDone = true;
 
-        // Count stale/needs-confirmation fields
         Map<String, Freshness> report = orgContext.getFreshnessReport();
         long staleCount = report.values().stream()
             .filter(f -> f == Freshness.STALE || f == Freshness.NEEDS_CONFIRMATION)
@@ -176,18 +158,73 @@ public class AgenticRoutinesPanel extends JPanel {
 
         if (staleCount > 0) {
             statusLabel.setText(staleCount + " field(s) are stale. Select fields and click 'Refresh Selected' to update.");
-            // Auto-select stale fields
             selectAllStale();
         }
     }
 
-    // ===================== Context Health Sidebar =====================
+    // ===================== Sidebar: Tasks + Context Health =====================
 
-    public void refreshHealthPanel() {
-        healthPanel.removeAll();
+    private void rebuildSidebar() {
+        sidebarContent.removeAll();
         fieldCheckboxes.clear();
 
+        // --- Task List Section ---
+        addSidebarSection("TASKS");
+
+        Map<String, List<AgenticTask>> byCategory = taskRegistry.getByCategory();
+        for (var catEntry : byCategory.entrySet()) {
+            String category = catEntry.getKey();
+            List<AgenticTask> tasks = catEntry.getValue();
+
+            // Category label
+            JLabel catLabel = new JLabel(category);
+            catLabel.setFont(catLabel.getFont().deriveFont(Font.BOLD, 11f));
+            catLabel.setForeground(new Color(100, 100, 110));
+            catLabel.setAlignmentX(LEFT_ALIGNMENT);
+            catLabel.setBorder(BorderFactory.createEmptyBorder(4, 4, 2, 0));
+            sidebarContent.add(catLabel);
+
+            for (AgenticTask task : tasks) {
+                JButton taskBtn = new JButton(task.getName());
+                taskBtn.setToolTipText(task.getDescription());
+                taskBtn.setAlignmentX(LEFT_ALIGNMENT);
+                taskBtn.setMaximumSize(new Dimension(250, 28));
+                taskBtn.setFont(taskBtn.getFont().deriveFont(11f));
+                taskBtn.setHorizontalAlignment(SwingConstants.LEFT);
+                taskBtn.setEnabled(task.isAvailable());
+                taskBtn.setBorder(BorderFactory.createEmptyBorder(2, 12, 2, 4));
+
+                if (!task.isAvailable()) {
+                    taskBtn.setForeground(new Color(180, 180, 190));
+                }
+
+                taskBtn.addActionListener(e -> {
+                    AgenticTaskContext ctx = buildTaskContext();
+                    task.execute(ctx);
+                });
+                sidebarContent.add(taskBtn);
+            }
+        }
+
+        // --- Separator ---
+        sidebarContent.add(Box.createVerticalStrut(12));
+        sidebarContent.add(new JSeparator());
+        sidebarContent.add(Box.createVerticalStrut(8));
+
+        // --- Context Health Section ---
+        addSidebarSection("CONTEXT HEALTH");
+
         Map<String, Freshness> report = orgContext.getFreshnessReport();
+
+        // Summary line
+        long totalFields = report.size();
+        long freshCount = report.values().stream().filter(f -> f == Freshness.FRESH).count();
+        JLabel summaryLabel = new JLabel(freshCount + "/" + totalFields + " fields fresh");
+        summaryLabel.setFont(summaryLabel.getFont().deriveFont(Font.ITALIC, 11f));
+        summaryLabel.setForeground(new Color(130, 130, 140));
+        summaryLabel.setAlignmentX(LEFT_ALIGNMENT);
+        sidebarContent.add(summaryLabel);
+        sidebarContent.add(Box.createVerticalStrut(8));
 
         // Group fields by freshness
         Map<Freshness, List<String>> grouped = new LinkedHashMap<>();
@@ -200,45 +237,39 @@ public class AgenticRoutinesPanel extends JPanel {
             grouped.get(entry.getValue()).add(entry.getKey());
         }
 
-        // Section header
-        JLabel sectionTitle = new JLabel("Context Health");
-        sectionTitle.setFont(sectionTitle.getFont().deriveFont(Font.BOLD, 14f));
-        sectionTitle.setAlignmentX(LEFT_ALIGNMENT);
-        healthPanel.add(sectionTitle);
-        healthPanel.add(Box.createVerticalStrut(8));
-
-        // Summary line
-        long totalFields = report.size();
-        long freshCount = report.values().stream().filter(f -> f == Freshness.FRESH).count();
-        JLabel summaryLabel = new JLabel(freshCount + "/" + totalFields + " fields fresh");
-        summaryLabel.setFont(summaryLabel.getFont().deriveFont(Font.ITALIC, 11f));
-        summaryLabel.setForeground(new Color(130, 130, 140));
-        summaryLabel.setAlignmentX(LEFT_ALIGNMENT);
-        healthPanel.add(summaryLabel);
-        healthPanel.add(Box.createVerticalStrut(12));
-
-        // Render each freshness group
         for (var freshnessEntry : grouped.entrySet()) {
             Freshness freshness = freshnessEntry.getKey();
             List<String> fields = freshnessEntry.getValue();
             if (fields.isEmpty()) continue;
-
             addFreshnessGroup(freshness, fields);
         }
 
-        healthPanel.add(Box.createVerticalGlue());
-        healthPanel.revalidate();
-        healthPanel.repaint();
+        // Select all stale button
+        JButton selectStaleBtn = new JButton("Select All Stale");
+        selectStaleBtn.setAlignmentX(LEFT_ALIGNMENT);
+        selectStaleBtn.setMaximumSize(new Dimension(250, 24));
+        selectStaleBtn.setFont(selectStaleBtn.getFont().deriveFont(10f));
+        selectStaleBtn.addActionListener(e -> selectAllStale());
+        sidebarContent.add(Box.createVerticalStrut(4));
+        sidebarContent.add(selectStaleBtn);
+
+        sidebarContent.add(Box.createVerticalGlue());
+        sidebarContent.revalidate();
+        sidebarContent.repaint();
         updateRefreshSelectedButton();
     }
 
+    private void addSidebarSection(String title) {
+        JLabel label = new JLabel(title);
+        label.setFont(label.getFont().deriveFont(Font.BOLD, 12f));
+        label.setForeground(new Color(60, 60, 70));
+        label.setAlignmentX(LEFT_ALIGNMENT);
+        sidebarContent.add(label);
+        sidebarContent.add(Box.createVerticalStrut(6));
+    }
+
     private void addFreshnessGroup(Freshness freshness, List<String> fields) {
-        Color dotColor = switch (freshness) {
-            case FRESH -> new Color(76, 175, 80);               // green
-            case AGING -> new Color(255, 193, 7);               // amber
-            case STALE -> new Color(255, 152, 0);               // orange
-            case NEEDS_CONFIRMATION -> new Color(244, 67, 54);  // red
-        };
+        Color dotColor = freshnessColor(freshness);
         String label = switch (freshness) {
             case FRESH -> "FRESH";
             case AGING -> "AGING";
@@ -250,59 +281,56 @@ public class AgenticRoutinesPanel extends JPanel {
         JPanel groupHeader = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         groupHeader.setOpaque(false);
         groupHeader.setAlignmentX(LEFT_ALIGNMENT);
-        groupHeader.setMaximumSize(new Dimension(Integer.MAX_VALUE, 22));
+        groupHeader.setMaximumSize(new Dimension(Integer.MAX_VALUE, 20));
 
-        JLabel dot = new JLabel("\u25CF"); // filled circle
+        JLabel dot = new JLabel("\u25CF");
         dot.setForeground(dotColor);
-        dot.setFont(dot.getFont().deriveFont(12f));
+        dot.setFont(dot.getFont().deriveFont(10f));
         groupHeader.add(dot);
 
         JLabel groupLabel = new JLabel(label + " (" + fields.size() + ")");
-        groupLabel.setFont(groupLabel.getFont().deriveFont(Font.BOLD, 11f));
+        groupLabel.setFont(groupLabel.getFont().deriveFont(Font.BOLD, 10f));
         groupLabel.setForeground(new Color(80, 80, 90));
         groupHeader.add(groupLabel);
 
-        healthPanel.add(groupHeader);
+        sidebarContent.add(groupHeader);
 
-        // Field list with checkboxes
+        // Per-field checkboxes
         for (String fieldName : fields) {
             JCheckBox cb = new JCheckBox(OrganizationContext.getFieldLabel(fieldName));
-            cb.setFont(cb.getFont().deriveFont(11f));
+            cb.setFont(cb.getFont().deriveFont(10f));
             cb.setOpaque(false);
             cb.setAlignmentX(LEFT_ALIGNMENT);
-            cb.setMaximumSize(new Dimension(Integer.MAX_VALUE, 22));
-            cb.setBorder(BorderFactory.createEmptyBorder(1, 16, 1, 4));
+            cb.setMaximumSize(new Dimension(Integer.MAX_VALUE, 20));
+            cb.setBorder(BorderFactory.createEmptyBorder(0, 14, 0, 2));
             cb.setForeground(new Color(80, 80, 90));
             cb.addActionListener(e -> updateRefreshSelectedButton());
 
-            // Show last-updated tooltip
             ContextEntry<String> entry = orgContext.getEntry(fieldName);
             if (entry != null) {
-                String lastUpdated = entry.getLastUpdated();
-                String value = entry.getValue();
-                String preview = (value == null || value.isBlank()) ? "(empty)" : truncate(value, 60);
-                cb.setToolTipText("Last updated: " + lastUpdated + " | " + preview);
+                String preview = (entry.getValue() == null || entry.getValue().isBlank())
+                    ? "(empty)" : truncate(entry.getValue(), 60);
+                cb.setToolTipText("Last updated: " + entry.getLastUpdated() + " | " + preview);
             }
 
             fieldCheckboxes.put(fieldName, cb);
-            healthPanel.add(cb);
+            sidebarContent.add(cb);
         }
 
-        healthPanel.add(Box.createVerticalStrut(6));
+        sidebarContent.add(Box.createVerticalStrut(4));
     }
 
     private void updateRefreshSelectedButton() {
-        long selectedCount = fieldCheckboxes.values().stream().filter(JCheckBox::isSelected).count();
-        refreshSelectedBtn.setEnabled(selectedCount > 0);
-        refreshSelectedBtn.setText("Refresh Selected (" + selectedCount + ")");
+        long count = fieldCheckboxes.values().stream().filter(JCheckBox::isSelected).count();
+        refreshSelectedBtn.setEnabled(count > 0);
+        refreshSelectedBtn.setText("Refresh Selected (" + count + ")");
     }
 
     private void selectAllStale() {
         Map<String, Freshness> report = orgContext.getFreshnessReport();
         for (var entry : fieldCheckboxes.entrySet()) {
             Freshness f = report.get(entry.getKey());
-            boolean isStale = (f == Freshness.STALE || f == Freshness.NEEDS_CONFIRMATION);
-            entry.getValue().setSelected(isStale);
+            entry.getValue().setSelected(f == Freshness.STALE || f == Freshness.NEEDS_CONFIRMATION);
         }
         updateRefreshSelectedButton();
     }
@@ -310,69 +338,103 @@ public class AgenticRoutinesPanel extends JPanel {
     private List<String> getSelectedFields() {
         List<String> selected = new ArrayList<>();
         for (var entry : fieldCheckboxes.entrySet()) {
-            if (entry.getValue().isSelected()) {
-                selected.add(entry.getKey());
-            }
+            if (entry.getValue().isSelected()) selected.add(entry.getKey());
         }
         return selected;
     }
 
-    // ===================== Main Area: Output + Approvals =====================
+    private void onRefreshSelected() {
+        List<String> selected = getSelectedFields();
+        if (selected.isEmpty()) return;
 
-    private void showEmptyState() {
+        AgenticTask refreshTask = taskRegistry.getById("context-refresh");
+        if (refreshTask != null) {
+            AgenticTaskContext ctx = buildTaskContext();
+            refreshTask.execute(ctx, selected);
+        }
+    }
+
+    private AgenticTaskContext buildTaskContext() {
+        return new AgenticTaskContext(orgContext, reconciliation, changeLog, config, this);
+    }
+
+    // ===================== Public API for tasks to call back =====================
+
+    public void setStatus(String text) {
+        statusLabel.setText(text);
+    }
+
+    public void showLoading(String message) {
         outputArea.removeAll();
         approvalArea.removeAll();
-
-        JPanel emptyCard = createCard(
-            "Get Started",
-            "Select context fields using the checkboxes, then click 'Refresh Selected' " +
-            "to update them with AI assistance.\n\n" +
-            "Or click 'Daily Update (All)' to review and refresh all stale context at once.\n\n" +
-            "The update function will:\n" +
-            "  1. Ask what has changed recently\n" +
-            "  2. Propose structured updates for each field\n" +
-            "  3. Let you approve or reject each change",
-            new Color(240, 240, 248),
-            new Color(180, 180, 200)
-        );
-        outputArea.add(emptyCard);
-
+        JPanel card = createCard("Processing...", message,
+            new Color(227, 242, 253), new Color(144, 202, 249));
+        outputArea.add(card);
         mainPanel.revalidate();
         mainPanel.repaint();
     }
 
-    private void showFunctionOutput(String title, String content) {
+    public void showFunctionOutput(String title, String content) {
         outputArea.removeAll();
-
         JPanel card = createCard(title, content, new Color(232, 245, 233), new Color(129, 199, 132));
         outputArea.add(card);
-
         mainPanel.revalidate();
         mainPanel.repaint();
+    }
+
+    public void handleReconciliationResult(ReconciliationService.ReconciliationResult result) {
+        if (result == null) {
+            showFunctionOutput("Complete", "No updates needed \u2014 all context appears current.");
+            statusLabel.setText("No updates needed.");
+        } else {
+            int autoCount = result.autoApplied().size();
+            int pendingCount = result.needsApproval().size();
+
+            StringBuilder summary = new StringBuilder();
+            if (autoCount > 0) {
+                summary.append(autoCount).append(" change(s) auto-applied (low-risk/additive).\n");
+                for (ProposedChange c : result.autoApplied()) {
+                    summary.append("  \u2713 ").append(OrganizationContext.getFieldLabel(c.fieldName())).append("\n");
+                }
+            }
+            if (pendingCount > 0) {
+                summary.append(pendingCount).append(" change(s) need your approval below.");
+            }
+            if (autoCount == 0 && pendingCount == 0) {
+                summary.append("No changes proposed.");
+            }
+
+            showFunctionOutput("Results", summary.toString());
+            showApprovalCards(reconciliation.getApprovalQueue());
+            rebuildSidebar();
+            statusLabel.setText("Complete. " + autoCount + " auto-applied, " + pendingCount + " pending.");
+        }
+
+        // Clear checkboxes
+        fieldCheckboxes.values().forEach(cb -> cb.setSelected(false));
+        updateRefreshSelectedButton();
     }
 
     public void showApprovalCards(List<ProposedChange> pendingChanges) {
         approvalArea.removeAll();
+        if (pendingChanges.isEmpty()) return;
 
-        if (pendingChanges.isEmpty()) {
-            return;
-        }
-
-        JLabel approvalTitle = new JLabel("Pending Approvals (" + pendingChanges.size() + ")");
-        approvalTitle.setFont(approvalTitle.getFont().deriveFont(Font.BOLD, 13f));
-        approvalTitle.setAlignmentX(LEFT_ALIGNMENT);
-        approvalArea.add(approvalTitle);
+        JLabel title = new JLabel("Pending Approvals (" + pendingChanges.size() + ")");
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 13f));
+        title.setAlignmentX(LEFT_ALIGNMENT);
+        approvalArea.add(title);
         approvalArea.add(Box.createVerticalStrut(8));
 
         for (ProposedChange change : pendingChanges) {
-            JPanel card = createApprovalCard(change);
-            approvalArea.add(card);
+            approvalArea.add(createApprovalCard(change));
             approvalArea.add(Box.createVerticalStrut(6));
         }
 
         mainPanel.revalidate();
         mainPanel.repaint();
     }
+
+    // ===================== Approval Cards =====================
 
     private JPanel createApprovalCard(ProposedChange change) {
         JPanel card = new JPanel(new BorderLayout(8, 4));
@@ -384,16 +446,14 @@ public class AgenticRoutinesPanel extends JPanel {
             BorderFactory.createEmptyBorder(8, 12, 8, 12)
         ));
 
-        // Field name header
         JLabel fieldLabel = new JLabel(OrganizationContext.getFieldLabel(change.fieldName()));
         fieldLabel.setFont(fieldLabel.getFont().deriveFont(Font.BOLD, 12f));
         card.add(fieldLabel, BorderLayout.NORTH);
 
-        // Diff content
         JPanel diffPanel = new JPanel(new GridLayout(2, 1, 0, 4));
         diffPanel.setOpaque(false);
 
-        String currentDisplay = change.currentValue() == null || change.currentValue().isBlank()
+        String currentDisplay = (change.currentValue() == null || change.currentValue().isBlank())
             ? "(empty)" : truncate(change.currentValue(), 120);
         String proposedDisplay = truncate(change.proposedValue(), 120);
 
@@ -409,7 +469,6 @@ public class AgenticRoutinesPanel extends JPanel {
 
         card.add(diffPanel, BorderLayout.CENTER);
 
-        // Approve / Reject buttons
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         buttons.setOpaque(false);
 
@@ -417,11 +476,9 @@ public class AgenticRoutinesPanel extends JPanel {
         approveBtn.setForeground(new Color(76, 175, 80));
         approveBtn.addActionListener(e -> {
             reconciliation.approve(change);
-            refreshHealthPanel();
+            rebuildSidebar();
             showApprovalCards(reconciliation.getApprovalQueue());
-            if (reconciliation.getApprovalQueue().isEmpty()) {
-                statusLabel.setText("All changes processed.");
-            }
+            if (reconciliation.getApprovalQueue().isEmpty()) statusLabel.setText("All changes processed.");
         });
         buttons.add(approveBtn);
 
@@ -430,9 +487,7 @@ public class AgenticRoutinesPanel extends JPanel {
         rejectBtn.addActionListener(e -> {
             reconciliation.reject(change);
             showApprovalCards(reconciliation.getApprovalQueue());
-            if (reconciliation.getApprovalQueue().isEmpty()) {
-                statusLabel.setText("All changes processed.");
-            }
+            if (reconciliation.getApprovalQueue().isEmpty()) statusLabel.setText("All changes processed.");
         });
         buttons.add(rejectBtn);
 
@@ -440,114 +495,20 @@ public class AgenticRoutinesPanel extends JPanel {
         return card;
     }
 
-    // ===================== Update Flows =====================
+    // ===================== Empty State =====================
 
-    /** Refreshes only the checkbox-selected fields. */
-    private void onRefreshSelected() {
-        List<String> selected = getSelectedFields();
-        if (selected.isEmpty()) return;
-        onDailyUpdate(selected);
-    }
-
-    /**
-     * Runs the Daily Context Update function.
-     * @param targetFields specific fields to update, or null for all stale
-     */
-    public void onDailyUpdate(List<String> targetFields) {
-        // Build a description of what will be updated
-        String fieldDesc;
-        if (targetFields != null) {
-            List<String> labels = targetFields.stream()
-                .map(OrganizationContext::getFieldLabel)
-                .toList();
-            fieldDesc = "Fields to update: " + String.join(", ", labels);
-        } else {
-            fieldDesc = "All stale and aging fields will be reviewed.";
-        }
-
-        // Ask user what changed
-        String userInput = (String) JOptionPane.showInputDialog(
-            this,
-            fieldDesc + "\n\nWhat has changed since your last update?\n" +
-            "(Or press OK to just review current context.)",
-            "Daily Context Update",
-            JOptionPane.QUESTION_MESSAGE,
-            null, null, ""
-        );
-
-        if (userInput == null) return; // cancelled
-
-        statusLabel.setText("Running Daily Context Update...");
+    private void showEmptyState() {
         outputArea.removeAll();
         approvalArea.removeAll();
 
-        // Show loading state
-        JPanel loadingCard = createCard("Processing...",
-            "Analyzing context and generating update proposals...",
-            new Color(227, 242, 253), new Color(144, 202, 249));
-        outputArea.add(loadingCard);
+        JPanel card = createCard("Get Started",
+            "Select a task from the sidebar, or check context fields and click 'Refresh Selected'.\n\n" +
+            "Tasks run AI-powered routines that can read and update your organization context.",
+            new Color(240, 240, 248), new Color(180, 180, 200));
+        outputArea.add(card);
+
         mainPanel.revalidate();
         mainPanel.repaint();
-
-        // Run in background
-        new SwingWorker<ReconciliationService.ReconciliationResult, Void>() {
-            @Override
-            protected ReconciliationService.ReconciliationResult doInBackground() {
-                java.net.http.HttpClient httpClient = java.net.http.HttpClient.newHttpClient();
-                int maxTokens = config.getMaxResponseTokens();
-                LlmClient client = new AnthropicClient(httpClient, config.getClaudeUrl(),
-                        config.getClaudeKey(), config.getClaudeModel(), maxTokens);
-                return dailyUpdateFn.execute(client, targetFields, userInput);
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    ReconciliationService.ReconciliationResult result = get();
-                    SwingUtilities.invokeLater(() -> {
-                        if (result == null) {
-                            showFunctionOutput("Daily Update Complete",
-                                "No updates needed \u2014 all context appears current.");
-                            statusLabel.setText("No updates needed.");
-                        } else {
-                            int autoCount = result.autoApplied().size();
-                            int pendingCount = result.needsApproval().size();
-
-                            StringBuilder summary = new StringBuilder();
-                            if (autoCount > 0) {
-                                summary.append(autoCount).append(" change(s) auto-applied (low-risk/additive).\n");
-                                for (ProposedChange c : result.autoApplied()) {
-                                    summary.append("  \u2713 ").append(OrganizationContext.getFieldLabel(c.fieldName())).append("\n");
-                                }
-                            }
-                            if (pendingCount > 0) {
-                                summary.append(pendingCount).append(" change(s) need your approval below.");
-                            }
-                            if (autoCount == 0 && pendingCount == 0) {
-                                summary.append("No changes proposed.");
-                            }
-
-                            showFunctionOutput("Daily Update Results", summary.toString());
-                            showApprovalCards(reconciliation.getApprovalQueue());
-                            refreshHealthPanel();
-
-                            statusLabel.setText("Daily update complete. " +
-                                autoCount + " auto-applied, " + pendingCount + " pending approval.");
-                        }
-
-                        // Clear checkboxes after run
-                        fieldCheckboxes.values().forEach(cb -> cb.setSelected(false));
-                        updateRefreshSelectedButton();
-                    });
-                } catch (Exception e) {
-                    SwingUtilities.invokeLater(() -> {
-                        showFunctionOutput("Error",
-                            "Daily update failed: " + e.getMessage());
-                        statusLabel.setText("Error: " + e.getMessage());
-                    });
-                }
-            }
-        }.execute();
     }
 
     // ===================== UI Helpers =====================
@@ -579,10 +540,18 @@ public class AgenticRoutinesPanel extends JPanel {
         return card;
     }
 
+    private static Color freshnessColor(Freshness f) {
+        return switch (f) {
+            case FRESH -> new Color(76, 175, 80);
+            case AGING -> new Color(255, 193, 7);
+            case STALE -> new Color(255, 152, 0);
+            case NEEDS_CONFIRMATION -> new Color(244, 67, 54);
+        };
+    }
+
     private static String truncate(String text, int maxLen) {
         if (text == null) return "";
-        if (text.length() <= maxLen) return text;
-        return text.substring(0, maxLen) + "...";
+        return text.length() <= maxLen ? text : text.substring(0, maxLen) + "...";
     }
 
     private static String escapeHtml(String text) {
