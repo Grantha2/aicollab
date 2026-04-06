@@ -52,6 +52,12 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     // View panel for debate
     private JPanel debateViewPanel;
 
+    // Agentic infrastructure
+    private ContextChangeLog changeLog;
+    private ReconciliationService reconciliationService;
+    private DailyContextUpdateFunction dailyUpdateFn;
+    private AgenticRoutinesPanel agenticPanel;
+
     public MainGui() {
         super("AI Collaboration Platform \u2014 Executive Suite");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -204,8 +210,13 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         debateViewPanel.add(debateContentPanel, BorderLayout.CENTER);
         viewContainer.add(debateViewPanel, VIEW_DEBATE);
 
-        // Agentic Routines view: placeholder
-        viewContainer.add(new AgenticRoutinesPanel(), VIEW_AGENTIC);
+        // Agentic Routines view: placeholder until initApplication() creates real panel
+        JPanel agenticPlaceholder = new JPanel(new BorderLayout());
+        agenticPlaceholder.setBackground(new Color(245, 245, 250));
+        JLabel loadingLabel = new JLabel("Loading agentic routines...", SwingConstants.CENTER);
+        loadingLabel.setForeground(Color.GRAY);
+        agenticPlaceholder.add(loadingLabel, BorderLayout.CENTER);
+        viewContainer.add(agenticPlaceholder, VIEW_AGENTIC);
 
         return viewContainer;
     }
@@ -295,6 +306,19 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             refreshProfileCombo();
             rebuildStakeholderCombo();
             rebuildMaestro();
+
+            // Initialize agentic infrastructure
+            OrganizationContext orgCtx = contextController.getOrganizationContext();
+            changeLog = new ContextChangeLog();
+            reconciliationService = new ReconciliationService(orgCtx, changeLog);
+            dailyUpdateFn = new DailyContextUpdateFunction(orgCtx, reconciliationService);
+            agenticPanel = new AgenticRoutinesPanel(orgCtx, reconciliationService, dailyUpdateFn, config);
+
+            // Replace placeholder with real agentic panel
+            viewContainer.remove(viewContainer.getComponentCount() - 1);
+            viewContainer.add(agenticPanel, VIEW_AGENTIC);
+            viewContainer.revalidate();
+
             statusLabel.setText("Loaded profile set: " + activeProfileSet.getName());
         } catch (Exception e) {
             JOptionPane.showMessageDialog(this,
