@@ -359,7 +359,8 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
                 config.getGeminiKey(), config.getGeminiModel(), maxTokens);
 
         conversationContext = new ConversationContext(config.getMaxHistoryChars());
-        PromptBuilder promptBuilder = new PromptBuilder(conversationContext, activeProfileSet.getTeamContext());
+        String effectiveTeamCtx = contextController.getEffectiveTeamContext(activeProfileSet.getTeamContext());
+        PromptBuilder promptBuilder = new PromptBuilder(conversationContext, effectiveTeamCtx, contextController);
         SessionStore sessionStore = SessionStore.createNewDefaultSession();
 
         List<AgentProfile> agents = activeProfileSet.getAgents();
@@ -449,7 +450,9 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             sb.append("\n");
         }
 
-        sb.append(taskCtx.buildTaskBlock());
+        if (contextController.shouldIncludeTaskContext()) {
+            sb.append(taskCtx.buildTaskBlock());
+        }
 
         // Substitute {user_input} in the template or append user text
         if (taskCtx.getPromptTemplate() != null && taskCtx.getPromptTemplate().contains("{user_input}")) {

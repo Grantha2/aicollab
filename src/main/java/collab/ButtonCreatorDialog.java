@@ -42,6 +42,7 @@ public class ButtonCreatorDialog extends JDialog {
     private JPanel taskPanel;
 
     private SuiteButton result;
+    private SuiteButton editingExisting;
 
     public ButtonCreatorDialog(Frame owner, CategoryColorMap colorMap) {
         this(owner, colorMap, null);
@@ -49,6 +50,7 @@ public class ButtonCreatorDialog extends JDialog {
 
     public ButtonCreatorDialog(Frame owner, CategoryColorMap colorMap, SuiteButton existing) {
         super(owner, existing == null ? "Create New Task Button" : "Edit Task Button", true);
+        this.editingExisting = existing;
         setLayout(new BorderLayout(8, 8));
         setSize(550, 620);
         setLocationRelativeTo(owner);
@@ -316,6 +318,11 @@ public class ButtonCreatorDialog extends JDialog {
         result = new SuiteButton(label,
                 (String) categoryCombo.getSelectedItem(),
                 (String) actionCombo.getSelectedItem());
+        // Preserve id and sortOrder when editing an existing button
+        if (editingExisting != null) {
+            result.setId(editingExisting.getId());
+            result.setSortOrder(editingExisting.getSortOrder());
+        }
         result.setIconPath(iconField.getText().trim());
         result.setDescription(descriptionArea.getText().trim());
         result.setSimpleMode(simpleModeToggle.isSelected());

@@ -46,6 +46,7 @@ public class PromptBuilder {
     // Injected via constructor so this class doesn't depend on global state.
     private final ConversationContext context;
     private final String teamContext;
+    private final ContextController controller;
 
     // ============================================================
     // Constructor.
@@ -55,12 +56,35 @@ public class PromptBuilder {
     //             context.getHistoryBlock() to include prior cycles.
     // ============================================================
     public PromptBuilder(ConversationContext context) {
-        this(context, DEFAULT_TEAM_CONTEXT);
+        this(context, DEFAULT_TEAM_CONTEXT, null);
     }
 
     public PromptBuilder(ConversationContext context, String teamContext) {
+        this(context, teamContext, null);
+    }
+
+    public PromptBuilder(ConversationContext context, String teamContext, ContextController controller) {
         this.context = context;
         this.teamContext = teamContext;
+        this.controller = controller;
+    }
+
+    // Layer helpers that respect ContextController toggles
+    private String effectiveTeamContext() {
+        if (controller != null && !controller.shouldIncludeTeamContext()) return "";
+        return teamContext;
+    }
+    private String effectiveAgentBriefing(AgentProfile agent) {
+        if (controller != null && !controller.shouldIncludeAgentIdentity()) return "";
+        return agent.toBriefing();
+    }
+    private String effectiveStakeholderBriefing(StakeholderProfile s) {
+        if (controller != null && !controller.shouldIncludeStakeholderProfile()) return "";
+        return s.toBriefing();
+    }
+    private String effectiveHistory() {
+        if (controller != null && !controller.shouldIncludeHistory()) return "";
+        return context.getHistoryBlock();
     }
 
     // ============================================================
@@ -80,10 +104,10 @@ public class PromptBuilder {
     public String buildPhase1Prompt(AgentProfile agent,
                                     StakeholderProfile stakeholder,
                                     String userPrompt) {
-        return teamContext
-             + agent.toBriefing()
-             + stakeholder.toBriefing()
-             + context.getHistoryBlock()
+        return effectiveTeamContext()
+             + effectiveAgentBriefing(agent)
+             + effectiveStakeholderBriefing(stakeholder)
+             + effectiveHistory()
              + "=== STAKEHOLDER'S QUESTION ===\n"
              + userPrompt;
     }
@@ -97,10 +121,10 @@ public class PromptBuilder {
     // ============================================================
     public String buildSystemInstruction(AgentProfile agent,
                                          StakeholderProfile stakeholder) {
-        return teamContext
-             + agent.toBriefing()
-             + stakeholder.toBriefing()
-             + context.getHistoryBlock();
+        return effectiveTeamContext()
+             + effectiveAgentBriefing(agent)
+             + effectiveStakeholderBriefing(stakeholder)
+             + effectiveHistory();
     }
 
     // ============================================================
@@ -145,11 +169,11 @@ public class PromptBuilder {
         StringBuilder sb = new StringBuilder();
 
         // Layer 1: Agent identity (stay in character during reaction)
-        sb.append(teamContext);
-        sb.append(agent.toBriefing());
+        sb.append(effectiveTeamContext());
+        sb.append(effectiveAgentBriefing(agent));
 
         // Layer 2: Stakeholder context (remember who you're advising)
-        sb.append(stakeholder.toBriefing());
+        sb.append(effectiveStakeholderBriefing(stakeholder));
 
         // Layer 3: The cross-reaction task
         sb.append("THE ORIGINAL QUESTION:\n");

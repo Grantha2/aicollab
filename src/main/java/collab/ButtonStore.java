@@ -44,7 +44,9 @@ public class ButtonStore {
             Type listType = new TypeToken<List<SuiteButton>>() {}.getType();
             List<SuiteButton> buttons = gson.fromJson(json, listType);
             return buttons != null ? buttons : new ArrayList<>();
-        } catch (IOException e) {
+        } catch (Exception e) {
+            // Catches IOException and JsonSyntaxException so a malformed
+            // buttons.json doesn't prevent the app from starting.
             System.err.println("[ButtonStore] Failed to load buttons: " + e.getMessage());
             return getDefaultButtons();
         }
