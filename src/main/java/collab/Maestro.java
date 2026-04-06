@@ -169,7 +169,7 @@ public class Maestro {
         System.out.println("\n[Calling GPT (Innovation & Opportunity)...]");
         notifyStatus("Calling GPT (Innovation & Opportunity)...");
         LlmRequest gptP1Request = new LlmRequest(
-                promptBuilder.buildSystemInstruction(gptAgent, activeStakeholder),
+                promptBuilder.buildStatefulSystemInstruction(gptAgent, activeStakeholder),
                 List.of(new ChatMessage("user", promptBuilder.buildPhase1UserMessage(userPrompt))),
                 configuredMaxTokens);
         StatefulResponse gptP1 = gptClient.sendStateful(gptP1Request, null);
@@ -183,7 +183,7 @@ public class Maestro {
         System.out.println("\n[Calling Gemini (Technical Feasibility)...]");
         notifyStatus("Calling Gemini (Technical Feasibility)...");
         LlmRequest geminiP1Request = new LlmRequest(
-                promptBuilder.buildSystemInstruction(geminiAgent, activeStakeholder),
+                promptBuilder.buildStatefulSystemInstruction(geminiAgent, activeStakeholder),
                 List.of(new ChatMessage("user", promptBuilder.buildPhase1UserMessage(userPrompt))),
                 configuredMaxTokens);
         StatefulResponse geminiP1 = geminiClient.sendStateful(geminiP1Request, null);
