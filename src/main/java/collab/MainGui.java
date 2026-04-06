@@ -5,12 +5,21 @@ import java.awt.*;
 import java.net.http.HttpClient;
 import java.util.List;
 
-public class MainGui extends JFrame implements DebateListener {
+public class MainGui extends JFrame implements DebateListener, ButtonPanel.ButtonClickListener {
 
     private Config config;
     private ProfileLibrary profileLibrary;
     private ProfileSet activeProfileSet;
-    private Orchestrator orchestrator;
+    private Maestro maestro;
+    private ConversationContext conversationContext;
+
+    // Executive Suite components
+    private CategoryColorMap colorMap;
+    private ButtonStore buttonStore;
+    private IconLoader iconLoader;
+    private ButtonPanel buttonPanel;
+    private ContextController contextController;
+    private List<SuiteButton> suiteButtons;
 
     private JComboBox<String> stakeholderCombo;
     private JComboBox<String> profileCombo;
@@ -23,36 +32,59 @@ public class MainGui extends JFrame implements DebateListener {
     private JTextArea promptArea;
     private JTextArea synthesisArea;
     private JLabel statusLabel;
+    private int cycleCount = 0;
 
     public MainGui() {
-        super("AI Collaboration Platform");
+        super("AI Collaboration Platform — Executive Suite");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout(8, 8));
+
+        // Initialize Executive Suite components
+        colorMap = new CategoryColorMap();
+        buttonStore = new ButtonStore();
+        iconLoader = new IconLoader();
+        contextController = new ContextController();
+        suiteButtons = buttonStore.loadButtons();
+
         setJMenuBar(buildMenuBar());
         add(buildToolbar(), BorderLayout.NORTH);
+        add(buildButtonPanel(), BorderLayout.WEST);
         add(buildMainPanel(), BorderLayout.CENTER);
         add(buildStatusBar(), BorderLayout.SOUTH);
-        setSize(1300, 850);
+        setSize(1500, 900);
         initApplication();
     }
 
     private JMenuBar buildMenuBar() {
         JMenuBar menuBar = new JMenuBar();
-        JMenu settingsMenu = new JMenu("Settings");
 
+        // Settings menu
+        JMenu settingsMenu = new JMenu("Settings");
         JMenuItem editConfig = new JMenuItem("Edit Configuration...");
         editConfig.addActionListener(e -> onEditConfig());
-
         JMenuItem selectProfile = new JMenuItem("Select Profile Set...");
         selectProfile.addActionListener(e -> onSelectProfileSet());
-
         JMenuItem createProfile = new JMenuItem("Create Profile Set...");
         createProfile.addActionListener(e -> onCreateProfileSet());
-
         settingsMenu.add(editConfig);
         settingsMenu.add(selectProfile);
         settingsMenu.add(createProfile);
         menuBar.add(settingsMenu);
+
+        // Context menu
+        JMenu contextMenu = new JMenu("Context");
+        JMenuItem contextControl = new JMenuItem("Context Control...");
+        contextControl.setAccelerator(KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_C,
+                java.awt.event.InputEvent.CTRL_DOWN_MASK | java.awt.event.InputEvent.SHIFT_DOWN_MASK));
+        contextControl.addActionListener(e -> onOpenContextControl());
+        JMenuItem clearHistory = new JMenuItem("Clear Conversation");
+        clearHistory.addActionListener(e -> onClearConversation());
+        contextMenu.add(contextControl);
+        contextMenu.addSeparator();
+        contextMenu.add(clearHistory);
+        menuBar.add(contextMenu);
+
         return menuBar;
     }
 
@@ -70,6 +102,12 @@ public class MainGui extends JFrame implements DebateListener {
         panel.add(profileCombo);
         panel.add(runButton);
         return panel;
+    }
+
+    private JComponent buildButtonPanel() {
+        buttonPanel = new ButtonPanel(colorMap, iconLoader, suiteButtons);
+        buttonPanel.setClickListener(this);
+        return buttonPanel;
     }
 
     private JComponent buildMainPanel() {
@@ -145,7 +183,7 @@ public class MainGui extends JFrame implements DebateListener {
             activeProfileSet = profileLibrary.loadSet(names.getFirst());
             refreshProfileCombo();
             rebuildStakeholderCombo();
-            rebuildOrchestrator();
+            rebuildMaestro();
             statusLabel.setText("Loaded profile set: " + activeProfileSet.getName());
         } catch (Exception e) {
             JOptionPane.showMessageDialog(this,
@@ -178,7 +216,7 @@ public class MainGui extends JFrame implements DebateListener {
         try {
             activeProfileSet = profileLibrary.loadSet(name);
             rebuildStakeholderCombo();
-            rebuildOrchestrator();
+            rebuildMaestro();
             statusLabel.setText("Loaded profile set: " + name);
         } catch (Exception e) {
             statusLabel.setText("Failed loading profile: " + e.getMessage());
@@ -191,14 +229,14 @@ public class MainGui extends JFrame implements DebateListener {
             return;
         }
         for (StakeholderProfile p : activeProfileSet.getStakeholders()) {
-            stakeholderCombo.addItem(p.getName() + " — " + p.getRole());
+            stakeholderCombo.addItem(p.getName() + " \u2014 " + p.getRole());
         }
         if (stakeholderCombo.getItemCount() > 0) {
             stakeholderCombo.setSelectedIndex(0);
         }
     }
 
-    private void rebuildOrchestrator() {
+    private void rebuildMaestro() {
         HttpClient httpClient = HttpClient.newHttpClient();
         int maxTokens = config.getMaxResponseTokens();
 
@@ -209,23 +247,94 @@ public class MainGui extends JFrame implements DebateListener {
         LlmClient geminiClient = new GeminiClient(httpClient,
                 config.getGeminiKey(), config.getGeminiModel(), maxTokens);
 
-        ConversationContext context = new ConversationContext(config.getMaxHistoryChars());
-        PromptBuilder promptBuilder = new PromptBuilder(context, activeProfileSet.getTeamContext());
+        conversationContext = new ConversationContext(config.getMaxHistoryChars());
+        PromptBuilder promptBuilder = new PromptBuilder(conversationContext, activeProfileSet.getTeamContext());
         SessionStore sessionStore = SessionStore.createNewDefaultSession();
 
         List<AgentProfile> agents = activeProfileSet.getAgents();
-        orchestrator = new Orchestrator(
+        maestro = new Maestro(
                 claudeClient, gptClient, geminiClient,
                 agents.get(0), agents.get(1), agents.get(2),
-                promptBuilder, context,
+                promptBuilder, conversationContext,
                 config.getDebateRounds(), maxTokens, sessionStore);
-        orchestrator.setDebateListener(this);
+        maestro.setDebateListener(this);
     }
+
+    // ============================================================
+    // Button Panel Callback — ButtonPanel.ButtonClickListener
+    // ============================================================
+
+    @Override
+    public void onButtonClicked(SuiteButton button) {
+        switch (button.getActionType()) {
+            case "RUN_DEBATE" -> onRunDebate();
+            case "SWITCH_PROFILE" -> onSelectProfileSet();
+            case "CREATE_PROFILE" -> onCreateProfileSet();
+            case "OPEN_CONTEXT_MENU" -> onOpenContextControl();
+            case "EDIT_CONFIG" -> onEditConfig();
+            case "EXPORT_SESSION" -> statusLabel.setText("Export not yet implemented.");
+            case "SPAWN_BUTTON" -> onCreateButton();
+            case "CUSTOM_PROMPT" -> {
+                String param = button.getParam("value");
+                if (param != null && !param.isEmpty()) {
+                    promptArea.setText(param);
+                    onRunDebate();
+                }
+            }
+            default -> statusLabel.setText("Unknown action: " + button.getActionType());
+        }
+    }
+
+    @Override
+    public void onCreateButton() {
+        ButtonCreatorDialog dialog = new ButtonCreatorDialog(this, colorMap);
+        dialog.setVisible(true);
+        SuiteButton newBtn = dialog.getResult();
+        if (newBtn != null) {
+            suiteButtons.add(newBtn);
+            buttonStore.saveButtons(suiteButtons);
+            buttonPanel.rebuildButtons();
+            statusLabel.setText("Created button: " + newBtn.getLabel());
+        }
+    }
+
+    @Override
+    public void onEditButton(SuiteButton button) {
+        ButtonCreatorDialog dialog = new ButtonCreatorDialog(this, colorMap, button);
+        dialog.setVisible(true);
+        SuiteButton edited = dialog.getResult();
+        if (edited != null) {
+            int idx = suiteButtons.indexOf(button);
+            if (idx >= 0) {
+                suiteButtons.set(idx, edited);
+            }
+            buttonStore.saveButtons(suiteButtons);
+            buttonPanel.rebuildButtons();
+            statusLabel.setText("Updated button: " + edited.getLabel());
+        }
+    }
+
+    @Override
+    public void onDeleteButton(SuiteButton button) {
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Delete button \"" + button.getLabel() + "\"?",
+                "Confirm Delete", JOptionPane.YES_NO_OPTION);
+        if (confirm == JOptionPane.YES_OPTION) {
+            suiteButtons.remove(button);
+            buttonStore.saveButtons(suiteButtons);
+            buttonPanel.rebuildButtons();
+            statusLabel.setText("Deleted button: " + button.getLabel());
+        }
+    }
+
+    // ============================================================
+    // Menu Actions
+    // ============================================================
 
     private void onEditConfig() {
         ConfigEditorDialog dialog = new ConfigEditorDialog(this, config);
         dialog.setVisible(true);
-        rebuildOrchestrator();
+        rebuildMaestro();
     }
 
     private void onSelectProfileSet() {
@@ -237,7 +346,7 @@ public class MainGui extends JFrame implements DebateListener {
                 activeProfileSet = selected;
                 refreshProfileCombo();
                 rebuildStakeholderCombo();
-                rebuildOrchestrator();
+                rebuildMaestro();
                 statusLabel.setText("Loaded profile set: " + selected.getName());
             }
         } catch (Exception e) {
@@ -260,7 +369,7 @@ public class MainGui extends JFrame implements DebateListener {
             activeProfileSet = profileLibrary.loadSet(newSet.getName());
             refreshProfileCombo();
             rebuildStakeholderCombo();
-            rebuildOrchestrator();
+            rebuildMaestro();
             statusLabel.setText("Created and loaded profile set: " + newSet.getName());
         } catch (Exception e) {
             JOptionPane.showMessageDialog(this,
@@ -270,8 +379,35 @@ public class MainGui extends JFrame implements DebateListener {
         }
     }
 
+    private void onOpenContextControl() {
+        ContextControlDialog dialog = new ContextControlDialog(
+                this, contextController, conversationContext, activeProfileSet);
+        dialog.setVisible(true);
+    }
+
+    private void onClearConversation() {
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Clear all conversation history and streams?",
+                "Confirm Clear", JOptionPane.YES_NO_OPTION);
+        if (confirm == JOptionPane.YES_OPTION) {
+            clearStream(claudeStream);
+            clearStream(gptStream);
+            clearStream(geminiStream);
+            synthesisArea.setText("");
+            if (conversationContext != null) {
+                conversationContext.clear();
+            }
+            cycleCount = 0;
+            statusLabel.setText("Conversation cleared.");
+        }
+    }
+
+    // ============================================================
+    // Debate Execution
+    // ============================================================
+
     private void onRunDebate() {
-        if (orchestrator == null || activeProfileSet == null) {
+        if (maestro == null || activeProfileSet == null) {
             return;
         }
         int idx = stakeholderCombo.getSelectedIndex();
@@ -285,24 +421,50 @@ public class MainGui extends JFrame implements DebateListener {
             return;
         }
 
-        clearStream(claudeStream);
-        clearStream(gptStream);
-        clearStream(geminiStream);
-        synthesisArea.setText("");
+        // Phase 5b: Don't clear streams — add cycle divider instead
+        cycleCount++;
+        if (cycleCount > 1) {
+            appendCycleDivider(claudeStream, cycleCount);
+            appendCycleDivider(gptStream, cycleCount);
+            appendCycleDivider(geminiStream, cycleCount);
+            // Append divider to synthesis area
+            synthesisArea.append("\n\n" + "\u2550".repeat(40) + " Cycle " + cycleCount + " " + "\u2550".repeat(40) + "\n\n");
+        }
 
         new SwingWorker<Void, Void>() {
             @Override
             protected Void doInBackground() {
-                orchestrator.runDebate(prompt, activeStakeholder);
+                maestro.runDebate(prompt, activeStakeholder);
                 return null;
             }
         }.execute();
     }
 
+    private void appendCycleDivider(JPanel stream, int cycle) {
+        JPanel divider = new JPanel(new BorderLayout());
+        divider.setMaximumSize(new Dimension(Integer.MAX_VALUE, 30));
+        divider.setBackground(new Color(60, 60, 60));
+        divider.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+        JLabel label = new JLabel("\u2550\u2550\u2550 Cycle " + cycle + " \u2550\u2550\u2550");
+        label.setForeground(Color.WHITE);
+        label.setFont(label.getFont().deriveFont(Font.BOLD, 11f));
+        label.setHorizontalAlignment(SwingConstants.CENTER);
+        divider.add(label, BorderLayout.CENTER);
+        divider.setAlignmentX(Component.LEFT_ALIGNMENT);
+        stream.add(divider);
+        stream.add(Box.createVerticalStrut(4));
+        stream.revalidate();
+        stream.repaint();
+    }
+
+    // ============================================================
+    // DebateListener Implementation
+    // ============================================================
+
     @Override
     public void onPhase1Response(String model, String perspective, String response) {
         SwingUtilities.invokeLater(() -> appendCard(model,
-                "Phase 1 — " + perspective,
+                "Phase 1 \u2014 " + perspective,
                 response,
                 colorForPhase(model, 0),
                 false));
@@ -311,7 +473,7 @@ public class MainGui extends JFrame implements DebateListener {
     @Override
     public void onPhase2Reaction(int round, String model, String perspective, String reaction) {
         SwingUtilities.invokeLater(() -> appendCard(model,
-                "Phase 2 Round " + round + " — " + perspective,
+                "Phase 2 Round " + round + " \u2014 " + perspective,
                 reaction,
                 colorForPhase(model, round),
                 false));
@@ -319,7 +481,14 @@ public class MainGui extends JFrame implements DebateListener {
 
     @Override
     public void onSynthesis(String synthesis) {
-        SwingUtilities.invokeLater(() -> synthesisArea.setText(synthesis));
+        SwingUtilities.invokeLater(() -> {
+            // Append instead of replace for persistent conversation
+            if (synthesisArea.getText().isEmpty()) {
+                synthesisArea.setText(synthesis);
+            } else {
+                synthesisArea.append("\n\n" + synthesis);
+            }
+        });
     }
 
     @Override
@@ -406,6 +575,10 @@ public class MainGui extends JFrame implements DebateListener {
             default -> null;
         };
     }
+
+    // ============================================================
+    // Color Utilities
+    // ============================================================
 
     private Color colorForPhase(String model, int round) {
         return switch (model) {

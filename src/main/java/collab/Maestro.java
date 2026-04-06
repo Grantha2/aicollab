@@ -1,7 +1,7 @@
 package collab;
 
 // ============================================================
-// Orchestrator.java — Runs the 3-phase debate cycle.
+// Maestro.java — Runs the 3-phase debate cycle.
 //
 // WHAT THIS CLASS DOES (one sentence):
 // Coordinates Claude, GPT, and Gemini through independent responses,
@@ -9,13 +9,13 @@ package collab;
 //
 // HOW IT FITS THE ARCHITECTURE:
 // Main.java handles user input and the CLI loop. When the user
-// confirms a debate, Main calls orchestrator.runDebate(). The
-// Orchestrator takes over from there: it builds prompts using
+// confirms a debate, Main calls maestro.runDebate(). The
+// Maestro takes over from there: it builds prompts using
 // PromptBuilder, sends them via LlmClient implementations, prints
 // results, and stores the synthesis in ConversationContext.
 //
 // THE KEY DESIGN INSIGHT:
-// Orchestrator takes LlmClient interfaces — not AnthropicClient,
+// Maestro takes LlmClient interfaces — not AnthropicClient,
 // OpenAiClient, or GeminiClient specifically. It calls
 // sendMessage() and doesn't know or care which provider is behind
 // it. This means:
@@ -23,7 +23,7 @@ package collab;
 //     no money spent, instant results)
 //   - You could add a new model (Llama, Mistral, your own) by
 //     creating one new file that implements LlmClient. Zero
-//     changes to Orchestrator.
+//     changes to Maestro.
 //   - You could run two Claudes and one GPT, or three Geminis,
 //     without touching this file.
 // This is the real power of the interface pattern.
@@ -42,10 +42,10 @@ package collab;
 
 import java.util.List;
 
-public class Orchestrator {
+public class Maestro {
 
     // The three AI clients. These are LlmClient interfaces —
-    // Orchestrator doesn't know which provider is behind each one.
+    // Maestro doesn't know which provider is behind each one.
     private final LlmClient claudeClient;
     private final LlmClient gptClient;
     private final LlmClient geminiClient;
@@ -73,10 +73,10 @@ public class Orchestrator {
     // Constructor — wires together all the pieces.
     //
     // Main.java creates all these objects and passes them in.
-    // Orchestrator doesn't create anything itself — it just
+    // Maestro doesn't create anything itself — it just
     // coordinates. This makes it easy to test and reconfigure.
     // ============================================================
-    public Orchestrator(LlmClient claudeClient, LlmClient gptClient, LlmClient geminiClient,
+    public Maestro(LlmClient claudeClient, LlmClient gptClient, LlmClient geminiClient,
                         AgentProfile claudeAgent, AgentProfile gptAgent, AgentProfile geminiAgent,
                         PromptBuilder promptBuilder, ConversationContext context,
                         int debateRounds, int configuredMaxTokens, SessionStore sessionStore) {
@@ -295,7 +295,7 @@ public class Orchestrator {
         // ==========================
         // PHASE 3: SYNTHESIS
         // ==========================
-        // Claude acts as the orchestrator. It receives ALL SIX outputs
+        // Claude acts as the maestro. It receives ALL SIX outputs
         // (3 initial responses + 3 final reactions) and produces a structured
         // report identifying agreement, disagreement, and a recommendation.
         //

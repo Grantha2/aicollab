@@ -8,7 +8,7 @@ package collab;
 //
 // HOW IT FITS THE ARCHITECTURE:
 // Same role as AnthropicClient — one of three LlmClient implementations.
-// Orchestrator calls sendMessage() without knowing this is GPT.
+// Maestro calls sendMessage() without knowing this is GPT.
 //
 // HOW GPT DIFFERS FROM CLAUDE:
 //   - Auth: "Authorization: Bearer ..." header (industry standard OAuth pattern)

@@ -11,7 +11,7 @@ package collab;
 // Before each debate cycle, the user selects a stakeholder from
 // the hotseat menu in Main.java. That StakeholderProfile gets
 // passed to PromptBuilder, which formats it as the "outer layer"
-// of the onion — telling each AI model who they're advising.
+// of the context layers — telling each AI model who they're advising.
 //
 // WHY THIS MATTERS:
 // Grant asking "how should we structure the GUI?" gets different
@@ -61,7 +61,7 @@ public class StakeholderProfile {
     // ============================================================
     // toBriefing() — Formats this profile as a prompt-ready text block.
     //
-    // This is the "outer layer" of the onion — it tells the model
+    // This is the stakeholder context layer — it tells the model
     // WHO is asking the question and what they care about. The model
     // reads this and adjusts its advice to match the stakeholder's
     // role, authority, and KPIs.

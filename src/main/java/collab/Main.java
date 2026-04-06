@@ -5,7 +5,7 @@ package collab;
 //
 // WHAT THIS FILE DOES (one sentence):
 // Reads user input, manages the hotseat menu, and calls the
-// Orchestrator — it's the front door, not the brain.
+// Maestro — it's the front door, not the brain.
 //
 // HOW IT FITS THE ARCHITECTURE:
 // Main.java is the first file a new team member should read.
@@ -19,8 +19,8 @@ package collab;
 //   AgentProfile    → each model's identity and perspective
 //   StakeholderProfile → each human team member's profile
 //   ConversationContext → memory across debate cycles
-//   PromptBuilder   → assembles the layered "onion" prompts
-//   Orchestrator    → runs the 3-phase debate cycle
+//   PromptBuilder   → assembles the layered context prompts
+//   Maestro         → runs the 3-phase debate cycle
 //
 // Main.java creates all of these, wires them together, and then
 // runs a loop: pick a stakeholder, type a prompt, confirm, debate.
@@ -66,7 +66,7 @@ public class Main {
         // ==========================
         // STEP 3: CREATE THE THREE AI CLIENTS
         // ==========================
-        // Each client implements LlmClient (the interface). The Orchestrator
+        // Each client implements LlmClient (the interface). The Maestro
         // doesn't know or care which provider is behind each one — it just
         // calls sendMessage(). This is the power of the interface pattern.
         int maxTokens = config.getMaxResponseTokens();
@@ -112,12 +112,12 @@ public class Main {
         PromptBuilder promptBuilder = new PromptBuilder(context);
 
         // ==========================
-        // STEP 7: CREATE THE ORCHESTRATOR
+        // STEP 7: CREATE THE MAESTRO
         // ==========================
-        // The Orchestrator is the brain — it runs the 3-phase debate.
+        // The Maestro is the brain — it runs the 3-phase debate.
         // We pass it everything it needs: clients, agents, prompt builder,
         // memory, and how many debate rounds to run.
-        Orchestrator orchestrator = new Orchestrator(
+        Maestro maestro = new Maestro(
                 claudeClient, gptClient, geminiClient,
                 claudeAgent, gptAgent, geminiAgent,
                 promptBuilder, context,
@@ -132,7 +132,7 @@ public class Main {
         System.out.println("========================================");
         System.out.println("  AI Collaboration Platform v0.4");
         System.out.println("  Full Debate Cycle: 3 Models + Synthesis");
-        System.out.println("  Each cycle makes " + orchestrator.getApiCallCount() + " API calls.");
+        System.out.println("  Each cycle makes " + maestro.getApiCallCount() + " API calls.");
         System.out.println("  Session file: " + sessionStore.getSessionFile());
         System.out.println("  Type 'quit' to exit.");
         System.out.println("========================================");
@@ -225,7 +225,7 @@ public class Main {
             System.out.println();
             System.out.println("Stakeholder: " + active.getName() + " (" + active.getRole() + ")");
             System.out.println("Prompt preview: " + preview);
-            System.out.println("This will run a full debate cycle (" + orchestrator.getApiCallCount() + " API calls).");
+            System.out.println("This will run a full debate cycle (" + maestro.getApiCallCount() + " API calls).");
             System.out.print("Proceed? (y/n): ");
             String confirm = scanner.nextLine().trim().toLowerCase();
 
@@ -235,7 +235,7 @@ public class Main {
             }
 
             // Run the debate!
-            orchestrator.runDebate(userPrompt, active);
+            maestro.runDebate(userPrompt, active);
             cycleCount++;
 
             // ============================================================
@@ -247,7 +247,7 @@ public class Main {
             System.out.println();
             System.out.println("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
             System.out.println("  Cycle complete. Total cycles run: " + cycleCount);
-            System.out.println("  Estimated API calls this session: " + (cycleCount * orchestrator.getApiCallCount()));
+            System.out.println("  Estimated API calls this session: " + (cycleCount * maestro.getApiCallCount()));
             System.out.println("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
             System.out.println();
             System.out.print("Press Enter to continue (or type 'quit'): ");

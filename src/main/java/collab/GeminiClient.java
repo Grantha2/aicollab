@@ -8,7 +8,7 @@ package collab;
 //
 // HOW IT FITS THE ARCHITECTURE:
 // Same role as AnthropicClient and OpenAiClient — one of three
-// LlmClient implementations. Orchestrator doesn't know or care
+// LlmClient implementations. Maestro doesn't know or care
 // that this one talks to Google.
 //
 // HOW GEMINI DIFFERS FROM CLAUDE AND GPT:

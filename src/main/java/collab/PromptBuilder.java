@@ -4,17 +4,17 @@ package collab;
 // PromptBuilder.java — Builds all prompt types for the debate cycle.
 //
 // WHAT THIS CLASS DOES (one sentence):
-// Assembles the multi-layered "onion" prompts for Phase 1, Phase 2,
+// Assembles the multi-layered context prompts for Phase 1, Phase 2,
 // and Phase 3 by combining team context, agent identity, stakeholder
 // profile, conversation history, and the user's question.
 //
 // HOW IT FITS THE ARCHITECTURE:
-// Orchestrator calls PromptBuilder's methods to construct the prompts
+// Maestro calls PromptBuilder's methods to construct the prompts
 // before sending them to each LlmClient. PromptBuilder doesn't make
 // any API calls itself — it only builds the text.
 //
-// THE ONION MODEL (layered context):
-// Every API call carries three layers of context, innermost to outermost:
+// CONTEXT LAYERING ARCHITECTURE (CLA):
+// Every API call carries multiple layers of context, from foundation to surface:
 //   1. TEAM CONTEXT    — shared by all agents (what kind of panel this is)
 //   2. AGENT IDENTITY  — unique per model (AgentProfile.toBriefing())
 //   3. STAKEHOLDER     — who's asking (StakeholderProfile.toBriefing())
@@ -28,7 +28,7 @@ package collab;
 
 public class PromptBuilder {
 
-    // The "middle layer" of the onion — shared by all agents.
+    // The team context layer — shared by all agents.
     // Tells every model what kind of team they're part of.
 	static final String DEFAULT_TEAM_CONTEXT =
 			   "=== COLLABORATION CONTEXT ===\n"
@@ -64,8 +64,8 @@ public class PromptBuilder {
     }
 
     // ============================================================
-    // buildPhase1Prompt() — Assembles the full "onion" prompt for
-    // Phase 1 (independent responses).
+    // buildPhase1Prompt() — Assembles the full layered context prompt
+    // for Phase 1 (independent responses).
     //
     // Each model gets: team context + its agent identity +
     // stakeholder profile + conversation history + the question.
@@ -92,7 +92,7 @@ public class PromptBuilder {
     // buildSystemInstruction() — Builds the shared system context
     // for the new multi-turn path.
     //
-    // This is the single source of onion context and should be
+    // This is the single source of layered context and should be
     // passed as the system instruction for all phases.
     // ============================================================
     public String buildSystemInstruction(AgentProfile agent,
@@ -107,7 +107,7 @@ public class PromptBuilder {
     // buildPhase1UserMessage() — Builds only the user question
     // block for Phase 1 in the new multi-turn path.
     //
-    // No onion wrapping is included here because shared context
+    // No context layering is included here because shared context
     // comes from buildSystemInstruction(...).
     // ============================================================
     public String buildPhase1UserMessage(String userPrompt) {
@@ -218,7 +218,7 @@ public class PromptBuilder {
     // Claude synthesizes all perspectives into a structured report.
     //
     // This is the most important prompt in the system. It tells
-    // Claude (as orchestrator) to analyze ALL six outputs and
+    // Claude (as maestro) to analyze ALL six outputs and
     // produce a report with agreement, disagreement, insights,
     // and a stakeholder-specific recommendation.
     //
