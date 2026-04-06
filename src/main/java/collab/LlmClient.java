@@ -8,7 +8,7 @@ package collab;
 // AI client (Claude, GPT, Gemini) must follow.
 //
 // HOW IT FITS THE ARCHITECTURE:
-// Orchestrator.java calls sendMessage() on each client. It doesn't
+// Maestro.java calls sendMessage() on each client. It doesn't
 // know or care whether it's talking to Claude, GPT, Gemini, or a
 // mock. All it knows is: I give you a prompt, you give me a response.
 //
@@ -17,12 +17,12 @@ package collab;
 // 1. ADDING A NEW MODEL = ONE NEW FILE.
 //    Want to add Llama, Mistral, or your own model? Create a new
 //    class that implements LlmClient, write its sendMessage(), and
-//    pass it to the Orchestrator. Zero changes to Orchestrator.java,
+//    pass it to the Maestro. Zero changes to Maestro.java,
 //    zero changes to Main.java, zero changes to PromptBuilder.java.
 //
 // 2. TESTING WITHOUT API CALLS = ONE MOCK CLASS.
 //    Create a class called MockClient that implements LlmClient
-//    and returns canned responses. Pass it to Orchestrator instead
+//    and returns canned responses. Pass it to Maestro instead
 //    of real clients. No money spent, no network needed, instant
 //    tests. Example:
 //
@@ -36,16 +36,16 @@ package collab;
 //    This isn't a textbook exercise where you create Animal and
 //    Dog and Cat. This is a real system where the interface lets
 //    four different team members write four different implementations
-//    that all plug into the same Orchestrator. That's the actual
+//    that all plug into the same Maestro. That's the actual
 //    reason interfaces exist in professional code.
 //
 // WHAT IS AN INTERFACE?
 // An interface is a promise: "any class that implements me MUST
-// provide these methods." It's like a contract. The Orchestrator
+// provide these methods." It's like a contract. The Maestro
 // says "I need something that can sendMessage()" and doesn't care
 // HOW it sends the message — HTTP to Claude? HTTP to GPT? Read
 // from a file? Doesn't matter. The interface guarantees the method
-// exists, so the Orchestrator can call it safely.
+// exists, so the Maestro can call it safely.
 // ============================================================
 
 public interface LlmClient {
@@ -94,5 +94,18 @@ public interface LlmClient {
         }
 
         return sendMessage(flat.toString().trim());
+    }
+
+    // ============================================================
+    // sendStateful() — Stateful conversation path.
+    //
+    // Providers that support server-side conversation state (OpenAI
+    // Responses API, Gemini Interactions API) override this to pass
+    // a previous state ID and receive a new one. The default falls
+    // back to the stateless sendMessage path with a null stateId.
+    // ============================================================
+    default StatefulResponse sendStateful(LlmRequest request, String previousStateId) {
+        String text = sendMessage(request);
+        return new StatefulResponse(text, null);
     }
 }

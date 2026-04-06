@@ -9,7 +9,7 @@ package collab;
 // provides that history as a text block for prompt injection.
 //
 // HOW IT FITS THE ARCHITECTURE:
-// After each debate cycle, Orchestrator calls addSynthesis() to
+// After each debate cycle, Maestro calls addSynthesis() to
 // store the synthesis report. On the NEXT cycle, PromptBuilder
 // calls getHistoryBlock() to include that history in the prompt
 // so the AI models know what was discussed before.
@@ -41,6 +41,7 @@ public class ConversationContext {
     // Each entry is one cycle's synthesis report.
     // The oldest entry is at index 0; newest is at the end.
     private final List<String> syntheses = new ArrayList<>();
+    private final List<ConversationTurn> turns = new ArrayList<>();
 
     // Structured contributions tagged with who provided them.
     // This tracks every piece of context any user has contributed,
@@ -66,7 +67,7 @@ public class ConversationContext {
     // addSynthesis() — Stores a new synthesis report and trims
     // overflow if the total history exceeds the character budget.
     //
-    // Called by Orchestrator after Phase 3 completes.
+    // Called by Maestro after Phase 3 completes.
     //
     // PARAMETER:
     //   synthesis — the full synthesis report text from Claude
@@ -74,6 +75,10 @@ public class ConversationContext {
     public void addSynthesis(String synthesis) {
         syntheses.add(synthesis);
         trimHistory();
+    }
+
+    public void addTurn(ConversationTurn turn) {
+        turns.add(turn);
     }
 
     // ============================================================
@@ -155,11 +160,15 @@ public class ConversationContext {
     // ============================================================
     // getCycleCount() — Returns how many synthesis reports are stored.
     //
-    // Used by Main.java and Orchestrator to show status messages
+    // Used by Main.java and Maestro to show status messages
     // like "Panel has context from 3 previous cycles."
     // ============================================================
     public int getCycleCount() {
         return syntheses.size();
+    }
+
+    public int getTurnCount() {
+        return turns.size();
     }
 
     // ============================================================
@@ -170,6 +179,7 @@ public class ConversationContext {
     // ============================================================
     public void clear() {
         syntheses.clear();
+        turns.clear();
     }
 
     // ============================================================

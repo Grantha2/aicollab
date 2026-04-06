@@ -7,7 +7,7 @@ package collab;
 // Sends a prompt to Anthropic's Claude API and returns the text response.
 //
 // HOW IT FITS THE ARCHITECTURE:
-// This is one of three LlmClient implementations. Orchestrator calls
+// This is one of three LlmClient implementations. Maestro calls
 // sendMessage() without knowing which provider is behind it. This class
 // handles the Anthropic-specific details: URL, headers, JSON format,
 // and response parsing.

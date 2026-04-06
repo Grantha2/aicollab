@@ -40,6 +40,7 @@ public class Config {
     // The Properties object holds all key-value pairs from the file.
     // Think of it as a simple map: "claude.key" -> "sk-ant-..."
     private final Properties props;
+    private final String filename;
 
     // ============================================================
     // Constructor — loads or creates the config file.
@@ -51,6 +52,7 @@ public class Config {
     //   filename — path to the config file (usually "config.properties")
     // ============================================================
     public Config(String filename) {
+        this.filename = filename;
         this.props = loadOrCreateConfig(filename);
     }
 
@@ -60,15 +62,17 @@ public class Config {
     // so we don't store a full URL for it here.
 
     public String getClaudeKey()   { return props.getProperty("claude.key"); }
-    public String getClaudeModel() { return props.getProperty("claude.model", "claude-sonnet-4-20250514"); }
+    public String getClaudeModel() { return props.getProperty("claude.model", "claude-opus-4-6"); }
     public String getClaudeUrl()   { return props.getProperty("claude.url", "https://api.anthropic.com/v1/messages"); }
 
     public String getOpenAiKey()   { return props.getProperty("openai.key"); }
-    public String getOpenAiModel() { return props.getProperty("openai.model", "gpt-4o"); }
+    public String getOpenAiModel() { return props.getProperty("openai.model", "gpt-5.4-mini"); }
     public String getOpenAiUrl()   { return props.getProperty("openai.url", "https://api.openai.com/v1/chat/completions"); }
 
     public String getGeminiKey()   { return props.getProperty("gemini.key"); }
-    public String getGeminiModel() { return props.getProperty("gemini.model", "gemini-2.5-flash"); }
+    public String getGeminiModel() { return props.getProperty("gemini.model", "gemini-3.1-pro-preview"); }
+    
+   
 
     // --- TUNING PARAMETERS ---
     // These control how the debate works. Defaults are sensible;
@@ -88,6 +92,22 @@ public class Config {
      *  Prevents prompts from growing too large and hitting token limits. */
     public int getMaxHistoryChars() {
         return Integer.parseInt(props.getProperty("max.history.chars", "24000"));
+    }
+
+
+    public void setProperty(String key, String value) {
+        props.setProperty(key, value);
+    }
+
+    public void save() throws IOException {
+        props.store(new FileOutputStream(new File(filename)),
+                "API keys — this file is gitignored, NEVER commit it.");
+    }
+
+    public Properties getProperties() {
+        Properties copy = new Properties();
+        copy.putAll(props);
+        return copy;
     }
 
     // ============================================================
@@ -152,9 +172,9 @@ public class Config {
             props.setProperty("gemini.key", geminiKey);
 
             // Set default model names so the config file is self-documenting
-            props.setProperty("claude.model", "claude-sonnet-4-20250514");
-            props.setProperty("openai.model", "gpt-4o");
-            props.setProperty("gemini.model", "gemini-2.5-flash");
+            props.setProperty("claude.model", "claude-opus-4-6");
+            props.setProperty("openai.model", "gpt-5.4-mini");
+            props.setProperty("gemini.model", "gemini-3.1-pro-preview");
             props.setProperty("max.response.tokens", "8192");
             props.setProperty("debate.rounds", "1");
             props.setProperty("max.history.chars", "24000");

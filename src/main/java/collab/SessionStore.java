@@ -1,103 +1,262 @@
 package collab;
 
-// ============================================================
-// SessionStore.java — Persists contributions to a JSON file
-// using Gson.
-//
-// WHAT THIS CLASS DOES (one sentence):
-// Saves and loads Contribution records to/from a local JSON file
-// so context attribution survives across sessions.
-//
-// HOW IT FITS THE ARCHITECTURE:
-// After each debate cycle, Main.java tells SessionStore to save
-// the new Contribution. On startup, SessionStore loads prior
-// contributions so ConversationContext can include them in the
-// history block.
-//
-// WHY A SINGLE JSON FILE?
-// One file = one class, one read/write path, easy debugging.
-// The data volume for a university project will never exceed
-// what a single JSON file handles comfortably. If we ever need
-// a database, the Contribution records map directly to rows.
-//
-// FILE: session_data.json (gitignored — local to each machine)
-// ============================================================
-
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.google.gson.reflect.TypeToken;
-
-import java.io.*;
-import java.lang.reflect.Type;
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Stream;
 
 public class SessionStore {
 
-    private static final String DEFAULT_FILE = "session_data.json";
-    private final Gson gson;
-    private final String filePath;
+    private static final String FILE_PREFIX = "session-";
+    private static final String FILE_SUFFIX = ".jsonl";
 
-    public SessionStore() {
-        this(DEFAULT_FILE);
+    private final Path sessionFile;
+
+    public SessionStore(Path sessionFile) {
+        this.sessionFile = sessionFile;
+        ensureParentDirectoryExists();
+        ensureFileExists();
     }
 
-    public SessionStore(String filePath) {
-        this.filePath = filePath;
-        this.gson = new GsonBuilder().setPrettyPrinting().create();
+    public static Path defaultSessionsDir() {
+        return Path.of("sessions");
     }
 
-    // ============================================================
-    // loadContributions() — Reads all saved contributions from
-    // the JSON file. Returns an empty list if the file doesn't
-    // exist yet (first run).
-    // ============================================================
-    public List<Contribution> loadContributions() {
-        File file = new File(filePath);
-        if (!file.exists()) {
-            return new ArrayList<>();
+    public static SessionStore createNewDefaultSession() {
+        String timestamp = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
+                .replace(":", "-");
+        Path file = defaultSessionsDir().resolve(FILE_PREFIX + timestamp + FILE_SUFFIX);
+        return new SessionStore(file);
+    }
+
+    public static List<Path> listSessionFiles(Path sessionsDir) {
+        if (!Files.isDirectory(sessionsDir)) {
+            return List.of();
         }
-
-        try (Reader reader = new FileReader(file)) {
-            Type listType = new TypeToken<List<Contribution>>() {}.getType();
-            List<Contribution> loaded = gson.fromJson(reader, listType);
-            return loaded != null ? new ArrayList<>(loaded) : new ArrayList<>();
+        try (Stream<Path> stream = Files.list(sessionsDir)) {
+            return stream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> {
+                        String name = path.getFileName().toString();
+                        return name.startsWith(FILE_PREFIX) && name.endsWith(FILE_SUFFIX);
+                    })
+                    .sorted(Comparator.reverseOrder())
+                    .toList();
         } catch (IOException e) {
-            System.out.println("[SessionStore] Warning: could not load " + filePath
-                    + " — starting fresh. (" + e.getMessage() + ")");
-            return new ArrayList<>();
+            throw new RuntimeException("Failed to list session files in " + sessionsDir, e);
         }
     }
 
+    public Path getSessionFile() {
+        return sessionFile;
+    }
+
+    public void appendTurn(ConversationTurn turn) {
+        String json = "{\"type\":\"turn\","
+                + "\"cycle\":" + turn.cycle() + ","
+                + "\"phase\":\"" + escapeForJson(turn.phase()) + "\","
+                + "\"model\":\"" + escapeForJson(turn.model()) + "\","
+                + "\"role\":\"" + escapeForJson(turn.role()) + "\","
+                + "\"content\":\"" + escapeForJson(turn.content()) + "\","
+                + "\"epochMillis\":" + turn.epochMillis()
+                + "}";
+        appendLine(json);
+    }
+
+    public void appendSynthesis(int cycle, String synthesis) {
+        String json = "{\"type\":\"synthesis\","
+                + "\"cycle\":" + cycle + ","
+                + "\"synthesis\":\"" + escapeForJson(synthesis) + "\","
+                + "\"epochMillis\":" + System.currentTimeMillis()
+                + "}";
+        appendLine(json);
+    }
+
     // ============================================================
-    // saveContributions() — Writes the full list of contributions
-    // to the JSON file, overwriting any previous content.
+    // appendContribution() — Persists a Contribution record to the
+    // session JSONL file for attribution tracking.
     //
-    // Called after each new contribution is added.
+    // Records WHO provided context, WHAT area it was about, and WHEN.
+    // This ensures all user-provided context is tagged with identity
+    // in the centralized session store.
     // ============================================================
-    public void saveContributions(List<Contribution> contributions) {
-        try (Writer writer = new FileWriter(filePath)) {
-            gson.toJson(contributions, writer);
+    public void appendContribution(Contribution contribution) {
+        String json = "{\"type\":\"contribution\","
+                + "\"contributorName\":\"" + escapeForJson(contribution.contributorName()) + "\","
+                + "\"contributorRole\":\"" + escapeForJson(contribution.contributorRole()) + "\","
+                + "\"area\":\"" + escapeForJson(contribution.area().name()) + "\","
+                + "\"content\":\"" + escapeForJson(contribution.content()) + "\","
+                + "\"epochMillis\":" + contribution.epochMillis()
+                + "}";
+        appendLine(json);
+    }
+
+    public List<ConversationTurn> loadTurns(Path file) {
+        List<ConversationTurn> turns = new ArrayList<>();
+        for (String line : readAllLines(file)) {
+            if (!"turn".equals(extractJsonString(line, "type"))) {
+                continue;
+            }
+            turns.add(new ConversationTurn(
+                    (int) extractJsonLong(line, "cycle"),
+                    extractJsonString(line, "phase"),
+                    extractJsonString(line, "model"),
+                    extractJsonString(line, "role"),
+                    extractJsonString(line, "content"),
+                    extractJsonLong(line, "epochMillis")
+            ));
+        }
+        return turns;
+    }
+
+    public List<String> loadSyntheses(Path file) {
+        List<String> syntheses = new ArrayList<>();
+        for (String line : readAllLines(file)) {
+            if (!"synthesis".equals(extractJsonString(line, "type"))) {
+                continue;
+            }
+            syntheses.add(extractJsonString(line, "synthesis"));
+        }
+        return syntheses;
+    }
+
+    // ============================================================
+    // loadContributions() — Loads all persisted Contribution records
+    // from the session JSONL file.
+    // ============================================================
+    public List<Contribution> loadContributions(Path file) {
+        List<Contribution> contributions = new ArrayList<>();
+        for (String line : readAllLines(file)) {
+            if (!"contribution".equals(extractJsonString(line, "type"))) {
+                continue;
+            }
+            contributions.add(new Contribution(
+                    extractJsonString(line, "contributorName"),
+                    extractJsonString(line, "contributorRole"),
+                    FunctionalArea.valueOf(extractJsonString(line, "area")),
+                    extractJsonString(line, "content"),
+                    extractJsonLong(line, "epochMillis")
+            ));
+        }
+        return contributions;
+    }
+
+    private List<String> readAllLines(Path file) {
+        if (!Files.exists(file)) {
+            return List.of();
+        }
+        try {
+            return Files.readAllLines(file, StandardCharsets.UTF_8);
         } catch (IOException e) {
-            System.out.println("[SessionStore] Warning: could not save to " + filePath
-                    + " (" + e.getMessage() + ")");
+            throw new RuntimeException("Failed reading session file " + file, e);
         }
     }
 
-    // ============================================================
-    // appendContribution() — Adds a single contribution to the
-    // existing list and saves everything to disk.
-    //
-    // This is the most common operation: after each debate cycle,
-    // Main.java calls this to persist the new contribution.
-    //
-    // PARAMETERS:
-    //   contribution — the new contribution to add
-    //   existing     — the in-memory list (modified in place)
-    // ============================================================
-    public void appendContribution(Contribution contribution,
-                                   List<Contribution> existing) {
-        existing.add(contribution);
-        saveContributions(existing);
+    private void appendLine(String line) {
+        try (BufferedWriter writer = Files.newBufferedWriter(
+                sessionFile,
+                StandardCharsets.UTF_8,
+                java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.APPEND)) {
+            writer.write(line);
+            writer.newLine();
+        } catch (IOException e) {
+            throw new RuntimeException("Failed writing session event to " + sessionFile, e);
+        }
+    }
+
+    private void ensureParentDirectoryExists() {
+        try {
+            Path parent = sessionFile.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to create session directory for " + sessionFile, e);
+        }
+    }
+
+    private void ensureFileExists() {
+        try {
+            if (!Files.exists(sessionFile)) {
+                Files.createFile(sessionFile);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to create session file " + sessionFile, e);
+        }
+    }
+
+    private static String escapeForJson(String input) {
+        return input
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
+
+    private static String unescapeJsonString(String input) {
+        return input
+                .replace("\\t", "\t")
+                .replace("\\r", "\r")
+                .replace("\\n", "\n")
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\");
+    }
+
+    private static String extractJsonString(String json, String fieldName) {
+        String marker = "\"" + fieldName + "\":\"";
+        int start = json.indexOf(marker);
+        if (start < 0) {
+            String markerWithSpace = "\"" + fieldName + "\": \"";
+            start = json.indexOf(markerWithSpace);
+            if (start < 0) {
+                throw new IllegalArgumentException("Field '" + fieldName + "' not found in " + json);
+            }
+            start += markerWithSpace.length();
+        } else {
+            start += marker.length();
+        }
+
+        int end = start;
+        while (end < json.length()) {
+            if (json.charAt(end) == '"') {
+                int backslashes = 0;
+                int check = end - 1;
+                while (check >= start && json.charAt(check) == '\\') {
+                    backslashes++;
+                    check--;
+                }
+                if (backslashes % 2 == 0) {
+                    break;
+                }
+            }
+            end++;
+        }
+        return unescapeJsonString(json.substring(start, end));
+    }
+
+    private static long extractJsonLong(String json, String fieldName) {
+        String marker = "\"" + fieldName + "\":";
+        int start = json.indexOf(marker);
+        if (start < 0) {
+            throw new IllegalArgumentException("Field '" + fieldName + "' not found in " + json);
+        }
+        start += marker.length();
+        while (start < json.length() && Character.isWhitespace(json.charAt(start))) {
+            start++;
+        }
+        int end = start;
+        while (end < json.length() && (Character.isDigit(json.charAt(end)) || json.charAt(end) == '-')) {
+            end++;
+        }
+        return Long.parseLong(json.substring(start, end));
     }
 }

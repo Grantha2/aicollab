@@ -6,7 +6,7 @@ package collab;
 // WHAT THIS FILE DOES (one sentence):
 // Handles user login (name + role selection), displays the
 // role-filtered functional area menu, reads prompts, and calls
-// the Orchestrator — it's the front door, not the brain.
+// the Maestro — it's the front door, not the brain.
 //
 // HOW IT FITS THE ARCHITECTURE:
 // Main.java is the first file a new team member should read.
@@ -22,10 +22,10 @@ package collab;
 //   FunctionalArea  → the "buttons" each role can access
 //   UserSession     → logged-in user identity + role
 //   Contribution    → tagged context record (who, what, when)
-//   SessionStore    → JSON persistence for contributions
+//   SessionStore    → JSONL persistence for sessions
 //   ConversationContext → memory across debate cycles
-//   PromptBuilder   → assembles the layered "onion" prompts
-//   Orchestrator    → runs the 3-phase debate cycle
+//   PromptBuilder   → assembles the layered context prompts
+//   Maestro         → runs the 3-phase debate cycle
 //
 // HOW TO RUN:
 //   Option A (Maven):  mvn compile exec:java
@@ -37,12 +37,18 @@ package collab;
 // ============================================================
 
 import java.net.http.HttpClient;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Scanner;
 
 public class Main {
 
     public static void main(String[] args) {
+        boolean cliMode = java.util.Arrays.stream(args).anyMatch("--cli"::equals);
+        if (!cliMode) {
+            MainGui.launch();
+            return;
+        }
 
         // ==========================
         // STEP 1: LOAD CONFIGURATION
@@ -57,6 +63,9 @@ public class Main {
         // ==========================
         // STEP 3: CREATE THE THREE AI CLIENTS
         // ==========================
+        // Each client implements LlmClient (the interface). The Maestro
+        // doesn't know or care which provider is behind each one — it just
+        // calls sendMessage(). This is the power of the interface pattern.
         int maxTokens = config.getMaxResponseTokens();
 
         LlmClient claudeClient = new AnthropicClient(
@@ -83,30 +92,30 @@ public class Main {
         // STEP 5: CREATE MEMORY, PERSISTENCE, AND PROMPT BUILDER
         // ==========================
         ConversationContext context = new ConversationContext(config.getMaxHistoryChars());
-        SessionStore sessionStore = new SessionStore();
-        List<Contribution> allContributions = sessionStore.loadContributions();
+        Scanner scanner = new Scanner(System.in);
+        SessionStore sessionStore = selectSessionStore(scanner, context);
         PromptBuilder promptBuilder = new PromptBuilder(context);
 
         // ==========================
-        // STEP 6: CREATE THE ORCHESTRATOR
+        // STEP 6: CREATE THE MAESTRO
         // ==========================
-        Orchestrator orchestrator = new Orchestrator(
+        Maestro maestro = new Maestro(
                 claudeClient, gptClient, geminiClient,
                 claudeAgent, gptAgent, geminiAgent,
                 promptBuilder, context,
-                config.getDebateRounds(), maxTokens);
+                config.getDebateRounds(), maxTokens, sessionStore);
 
         // ==========================
         // STEP 7: RUN THE CLI LOOP
         // ==========================
-        Scanner scanner = new Scanner(System.in);
         int cycleCount = 0;
 
         System.out.println("========================================");
         System.out.println("  AI Collaboration Platform v0.5");
         System.out.println("  IDSSO Role-Based Access Control");
         System.out.println("  Full Debate Cycle: 3 Models + Synthesis");
-        System.out.println("  Each cycle makes " + orchestrator.getApiCallCount() + " API calls.");
+        System.out.println("  Each cycle makes " + maestro.getApiCallCount() + " API calls.");
+        System.out.println("  Session file: " + sessionStore.getSessionFile());
         System.out.println("  Type 'quit' to exit.");
         System.out.println("========================================");
 
@@ -114,7 +123,7 @@ public class Main {
         // User identifies themselves by name and selects their IDSSO role.
         // This determines which functional areas ("buttons") they can access.
         UserSession session = login(scanner);
-        orchestrator.setActiveSession(session);
+        maestro.setActiveSession(session);
 
         while (true) {
 
@@ -130,20 +139,15 @@ public class Main {
                         + (context.getCycleCount() == 1 ? "" : "s") + ")");
             }
 
-            // Show contribution count if there are prior contributions
-            if (!allContributions.isEmpty()) {
-                System.out.println("(Total contributions on record: "
-                        + allContributions.size() + ")");
-            }
-
             System.out.println("(Commands: 'switch', 'quit')");
 
             // --- FUNCTIONAL AREA SELECTION ---
             // Show only the areas this role can access, grouped by category.
             FunctionalArea selectedArea = selectFunctionalArea(scanner, session);
             if (selectedArea == null) {
-                // User typed 'quit' or 'switch' during area selection
-                // We handle these via sentinel returns — see selectFunctionalArea()
+                // User typed 'switch' during area selection — re-run login
+                session = login(scanner);
+                maestro.setActiveSession(session);
                 continue;
             }
 
@@ -189,7 +193,7 @@ public class Main {
 
             if (userPrompt.equals("__SWITCH__")) {
                 session = login(scanner);
-                orchestrator.setActiveSession(session);
+                maestro.setActiveSession(session);
                 continue;
             }
 
@@ -209,8 +213,7 @@ public class Main {
                     + " (" + session.getRole().getDisplayName() + ")");
             System.out.println("Area: " + selectedArea.getDisplayName());
             System.out.println("Prompt preview: " + preview);
-            System.out.println("This will run a full debate cycle ("
-                    + orchestrator.getApiCallCount() + " API calls).");
+            System.out.println("This will run a full debate cycle (" + maestro.getApiCallCount() + " API calls).");
             System.out.print("Proceed? (y/n): ");
             String confirm = scanner.nextLine().trim().toLowerCase();
 
@@ -231,13 +234,13 @@ public class Main {
                     System.currentTimeMillis()
             );
             context.addContribution(contribution);
-            sessionStore.appendContribution(contribution, allContributions);
+            sessionStore.appendContribution(contribution);
 
             // --- RUN THE DEBATE ---
             // The StakeholderProfile is generated from the UserSession,
             // bridging the RBAC system to the existing prompt pipeline.
             StakeholderProfile activeProfile = session.toStakeholderProfile();
-            orchestrator.runDebate(userPrompt, activeProfile);
+            maestro.runDebate(userPrompt, activeProfile);
             cycleCount++;
 
             // ============================================================
@@ -246,8 +249,7 @@ public class Main {
             System.out.println();
             System.out.println("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
             System.out.println("  Cycle complete. Total cycles run: " + cycleCount);
-            System.out.println("  Estimated API calls this session: "
-                    + (cycleCount * orchestrator.getApiCallCount()));
+            System.out.println("  Estimated API calls this session: " + (cycleCount * maestro.getApiCallCount()));
             System.out.println("  Contribution by: " + session.getUserName()
                     + " (" + session.getRole().getDisplayName() + ")");
             System.out.println("  Area: " + selectedArea.getDisplayName());
@@ -263,6 +265,71 @@ public class Main {
         }
 
         scanner.close();
+    }
+
+    // ============================================================
+    // selectSessionStore() — Lets the user start a new session or
+    // resume an existing one from the sessions/ directory.
+    // ============================================================
+    private static SessionStore selectSessionStore(Scanner scanner, ConversationContext context) {
+        while (true) {
+            System.out.println();
+            System.out.println("Session options:");
+            System.out.println("  1) Start new session");
+            System.out.println("  2) Resume existing session");
+            System.out.print("Choose 1 or 2: ");
+            String choice = scanner.nextLine().trim();
+
+            if ("1".equals(choice)) {
+                SessionStore store = SessionStore.createNewDefaultSession();
+                System.out.println("Created new session: " + store.getSessionFile());
+                return store;
+            }
+
+            if ("2".equals(choice)) {
+                List<Path> files = SessionStore.listSessionFiles(SessionStore.defaultSessionsDir());
+                if (files.isEmpty()) {
+                    System.out.println("No session files found in " + SessionStore.defaultSessionsDir()
+                            + ". Starting a new one instead.");
+                    SessionStore store = SessionStore.createNewDefaultSession();
+                    System.out.println("Created new session: " + store.getSessionFile());
+                    return store;
+                }
+
+                System.out.println("Available sessions:");
+                for (int i = 0; i < files.size(); i++) {
+                    System.out.println("  " + (i + 1) + ") " + files.get(i).getFileName());
+                }
+                System.out.print("Enter session number to resume: ");
+                String selected = scanner.nextLine().trim();
+                try {
+                    int idx = Integer.parseInt(selected) - 1;
+                    if (idx < 0 || idx >= files.size()) {
+                        System.out.println("Invalid session number.");
+                        continue;
+                    }
+                    Path selectedFile = files.get(idx);
+                    SessionStore store = new SessionStore(selectedFile);
+                    List<ConversationTurn> turns = store.loadTurns(selectedFile);
+                    for (ConversationTurn turn : turns) {
+                        context.addTurn(turn);
+                    }
+                    List<String> syntheses = store.loadSyntheses(selectedFile);
+                    for (String synthesis : syntheses) {
+                        context.addSynthesis(synthesis);
+                    }
+                    System.out.println("Resumed: " + selectedFile);
+                    System.out.println("Loaded " + turns.size() + " turns and "
+                            + syntheses.size() + " synthesis entries.");
+                    return store;
+                } catch (NumberFormatException e) {
+                    System.out.println("Please enter a valid number.");
+                }
+                continue;
+            }
+
+            System.out.println("Please enter 1 or 2.");
+        }
     }
 
 
@@ -335,7 +402,7 @@ public class Main {
     // by category (Internal Administration, Membership, etc.).
     //
     // RETURNS: the selected FunctionalArea, or null if the user
-    //          typed a command ('quit' or 'switch') instead
+    //          typed 'switch' (signal to Main loop to re-run login)
     // ============================================================
     private static FunctionalArea selectFunctionalArea(Scanner scanner,
                                                        UserSession session) {
