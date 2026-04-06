@@ -35,13 +35,30 @@ public class CategoryColorMap {
     };
 
     public CategoryColorMap() {
-        // Default categories
-        colorMap.put("Debate",   PALETTE[0]);
-        colorMap.put("Export",   PALETTE[1]);
-        colorMap.put("Profile",  PALETTE[2]);
-        colorMap.put("Context",  PALETTE[3]);
-        colorMap.put("Analysis", PALETTE[4]);
-        colorMap.put("Custom",   PALETTE[5]);
+        // System & legacy categories
+        colorMap.put("System",       new Color(66, 66, 66));
+        colorMap.put("Debate",       PALETTE[0]);
+        colorMap.put("Export",       PALETTE[1]);
+        colorMap.put("Profile",      PALETTE[2]);
+        colorMap.put("Context",      PALETTE[3]);
+        colorMap.put("Analysis",     PALETTE[4]);
+        colorMap.put("Custom",       PALETTE[5]);
+        colorMap.put("Communication", PALETTE[7]);
+        colorMap.put("Creative",     new Color(255, 87, 34));
+
+        // IDSSO executive categories
+        colorMap.put("Leadership",            new Color(25, 50, 120));
+        colorMap.put("Meetings",              new Color(0, 150, 136));
+        colorMap.put("Membership",            new Color(156, 39, 176));
+        colorMap.put("Events",                new Color(255, 152, 0));
+        colorMap.put("External Affairs",      new Color(63, 81, 181));
+        colorMap.put("Communications",        new Color(33, 150, 243));
+        colorMap.put("Marketing",             new Color(233, 30, 99));
+        colorMap.put("Finance",               new Color(76, 175, 80));
+        colorMap.put("Governance",            new Color(121, 85, 72));
+        colorMap.put("Operations",            new Color(96, 125, 139));
+        colorMap.put("Culture",               new Color(255, 193, 7));
+        colorMap.put("Crisis/Problem-Solving", new Color(244, 67, 54));
     }
 
     public Color colorForCategory(String category) {
