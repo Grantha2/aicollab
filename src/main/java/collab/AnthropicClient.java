@@ -29,6 +29,11 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
@@ -41,6 +46,16 @@ public class AnthropicClient implements LlmClient {
     private final String apiKey;
     private final String modelName;
     private final int maxTokens;
+
+    // Client-side conversation state for stateful calls.
+    // Anthropic's API is stateless, so we accumulate messages here
+    // and replay the full conversation on each call.
+    private final Map<String, ConversationState> conversations = new ConcurrentHashMap<>();
+
+    private static class ConversationState {
+        String systemInstruction;
+        final List<ChatMessage> messages = new ArrayList<>();
+    }
 
     // ============================================================
     // Constructor — stores everything needed to make API calls.
@@ -180,6 +195,92 @@ public class AnthropicClient implements LlmClient {
         }
     }
 
+
+    // ============================================================
+    // sendStateful() — Client-side stateful conversation for Claude.
+    //
+    // WHY THIS EXISTS:
+    // GPT and Gemini have server-side state (Responses API / Interactions API).
+    // Anthropic's API is stateless — every request must include the full
+    // message history. This method simulates statefulness by accumulating
+    // messages client-side and replaying them on each call, returning a
+    // state ID that maps to the stored conversation.
+    // ============================================================
+    @Override
+    public StatefulResponse sendStateful(LlmRequest request, String previousStateId) {
+        ConversationState state;
+
+        if (previousStateId != null && conversations.containsKey(previousStateId)) {
+            state = conversations.get(previousStateId);
+        } else {
+            state = new ConversationState();
+        }
+
+        // Set or update system instruction if provided
+        if (request.systemInstruction() != null && !request.systemInstruction().isEmpty()) {
+            state.systemInstruction = request.systemInstruction();
+        }
+
+        // Add new messages to history
+        for (ChatMessage msg : request.messages()) {
+            state.messages.add(msg);
+        }
+
+        // Build the full request with accumulated conversation
+        JsonObject body = new JsonObject();
+        body.addProperty("model", modelName);
+        body.addProperty("max_tokens", request.maxTokens());
+
+        if (state.systemInstruction != null && !state.systemInstruction.isEmpty()) {
+            body.addProperty("system", state.systemInstruction);
+        }
+
+        JsonArray messages = new JsonArray();
+        for (ChatMessage msg : state.messages) {
+            JsonObject m = new JsonObject();
+            m.addProperty("role", msg.role());
+            m.addProperty("content", msg.content());
+            messages.add(m);
+        }
+        body.add("messages", messages);
+
+        try {
+            HttpRequest httpRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(apiUrl))
+                    .header("Content-Type", "application/json")
+                    .header("x-api-key", apiKey)
+                    .header("anthropic-version", "2023-06-01")
+                    .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(httpRequest,
+                    HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                return new StatefulResponse(
+                        "[Claude ERROR " + response.statusCode() + "] " + response.body(), null);
+            }
+
+            String text = extractField(response.body(), "text");
+
+            // Add assistant response to conversation history
+            state.messages.add(new ChatMessage("assistant", text));
+
+            // Store state and return new ID
+            String newStateId = UUID.randomUUID().toString();
+            conversations.put(newStateId, state);
+
+            // Clean up old state ID to prevent memory leak
+            if (previousStateId != null) {
+                conversations.remove(previousStateId);
+            }
+
+            return new StatefulResponse(text, newStateId);
+
+        } catch (Exception e) {
+            return new StatefulResponse("[Claude ERROR] " + e.getMessage(), null);
+        }
+    }
 
     // ============================================================
     // escapeForJson() — Makes user input safe to embed in JSON.

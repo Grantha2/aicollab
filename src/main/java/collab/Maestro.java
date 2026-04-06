@@ -135,7 +135,8 @@ public class Maestro {
     public void runDebate(String userPrompt, StakeholderProfile activeStakeholder) {
         int cycle = context.getCycleCount() + 1;
 
-        // State IDs for stateful API chaining (OpenAI Responses / Gemini Interactions)
+        // State IDs for stateful API chaining (all three providers)
+        String claudeStateId = null;
         String gptStateId = null;
         String geminiStateId = null;
 
@@ -153,8 +154,13 @@ public class Maestro {
 
         System.out.println("\n[Calling Claude (Strategy & Risk)...]");
         notifyStatus("Calling Claude (Strategy & Risk)...");
-        String claudeResponse = claudeClient.sendMessage(
-                promptBuilder.buildPhase1Prompt(claudeAgent, activeStakeholder, userPrompt));
+        LlmRequest claudeP1Request = new LlmRequest(
+                promptBuilder.buildSystemInstruction(claudeAgent, activeStakeholder),
+                List.of(new ChatMessage("user", promptBuilder.buildPhase1UserMessage(userPrompt))),
+                configuredMaxTokens);
+        StatefulResponse claudeP1 = claudeClient.sendStateful(claudeP1Request, null);
+        String claudeResponse = claudeP1.text();
+        claudeStateId = claudeP1.stateId();
         persistTurn(cycle, "phase1", "Claude", claudeAgent.getPerspective(), claudeResponse);
         System.out.println("Claude responded. \u2713");
         notifyPhase1("Claude", claudeAgent.getPerspective(), claudeResponse);
@@ -237,9 +243,15 @@ public class Maestro {
 
             System.out.println("\n[Claude reacting to GPT and Gemini...]");
             notifyStatus("Round " + round + ": Claude reacting...");
-            String claudeReaction = claudeClient.sendMessage(
-                    promptBuilder.buildReactionPrompt(claudeAgent, activeStakeholder,
-                            userPrompt, "GPT", latestGpt, "Gemini", latestGemini));
+            String claudeReactionBody = promptBuilder.buildPhase2PeerMessage(
+                    claudeAgent, userPrompt, "GPT", latestGpt, "Gemini", latestGemini);
+            LlmRequest claudeP2Request = new LlmRequest(
+                    null,  // system instruction already in conversation state
+                    List.of(new ChatMessage("user", claudeReactionBody)),
+                    configuredMaxTokens);
+            StatefulResponse claudeP2 = claudeClient.sendStateful(claudeP2Request, claudeStateId);
+            String claudeReaction = claudeP2.text();
+            claudeStateId = claudeP2.stateId();
             persistTurn(cycle, "phase2-round-" + round, "Claude", claudeAgent.getPerspective(), claudeReaction);
             System.out.println("Claude reacted. \u2713");
             notifyPhase2(round, "Claude", claudeAgent.getPerspective(), claudeReaction);
@@ -308,7 +320,7 @@ public class Maestro {
         System.out.println("\u2551   PHASE 3: Synthesis Report           \u2551");
         System.out.println("\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d");
 
-        String synthesisPrompt = promptBuilder.buildSynthesisPrompt(
+        String synthesisBody = promptBuilder.buildPhase3SynthesisMessage(
                 activeStakeholder, userPrompt,
                 claudeResponse, gptResponse, geminiResponse,
                 latestClaude, latestGpt, latestGemini
@@ -316,7 +328,12 @@ public class Maestro {
 
         System.out.println("\n[Claude synthesizing all perspectives...]");
         notifyStatus("Generating synthesis...");
-        String synthesis = claudeClient.sendMessage(synthesisPrompt);
+        LlmRequest claudeP3Request = new LlmRequest(
+                null,  // system instruction already in conversation state
+                List.of(new ChatMessage("user", synthesisBody)),
+                configuredMaxTokens);
+        StatefulResponse claudeP3 = claudeClient.sendStateful(claudeP3Request, claudeStateId);
+        String synthesis = claudeP3.text();
 
         System.out.println("\n" + synthesis);
         notifySynthesis(synthesis);
