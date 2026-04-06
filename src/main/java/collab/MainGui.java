@@ -318,11 +318,22 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             reconciliationService = new ReconciliationService(orgCtx, changeLog);
             dailyUpdateFn = new DailyContextUpdateFunction(orgCtx, reconciliationService);
 
+            // Initialize structured data stores
+            InitiativeStore initiativeStore = new InitiativeStore();
+            RelationshipStore relationshipStore = new RelationshipStore();
+            OperationalFeedStore feedStore = new OperationalFeedStore();
+
             // Build task registry with built-in tasks
             AgenticTaskRegistry taskRegistry = new AgenticTaskRegistry();
+            taskRegistry.register(new StartYourDayTask(feedStore));
             taskRegistry.register(new ContextRefreshTask(dailyUpdateFn));
+            taskRegistry.register(new MeetingPrepTask(feedStore, relationshipStore));
+            taskRegistry.register(new InitiativeReviewTask(initiativeStore));
+            taskRegistry.register(new WeeklyReportTask());
+            taskRegistry.register(new StakeholderBriefingTask());
 
-            agenticPanel = new AgenticRoutinesPanel(orgCtx, reconciliationService, changeLog, config, taskRegistry);
+            agenticPanel = new AgenticRoutinesPanel(orgCtx, reconciliationService, changeLog,
+                    config, taskRegistry, feedStore);
 
             // Replace placeholder with real agentic panel
             viewContainer.remove(viewContainer.getComponentCount() - 1);

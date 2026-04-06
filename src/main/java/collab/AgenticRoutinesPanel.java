@@ -30,9 +30,10 @@ public class AgenticRoutinesPanel extends JPanel {
     private final ContextChangeLog changeLog;
     private final Config config;
     private final AgenticTaskRegistry taskRegistry;
+    private final OperationalFeedStore feedStore;
 
     // UI components
-    private final JPanel sidebarContent;    // left sidebar content (tasks + health)
+    private final JPanel sidebarContent;    // left sidebar content (tasks + health + upcoming)
     private final JPanel mainPanel;         // right: function output + approvals
     private final JPanel outputArea;        // function output text
     private final JPanel approvalArea;      // approval diff cards
@@ -49,11 +50,13 @@ public class AgenticRoutinesPanel extends JPanel {
                                  ReconciliationService reconciliation,
                                  ContextChangeLog changeLog,
                                  Config config,
-                                 AgenticTaskRegistry taskRegistry) {
+                                 AgenticTaskRegistry taskRegistry,
+                                 OperationalFeedStore feedStore) {
         this.orgContext = orgContext;
         this.reconciliation = reconciliation;
         this.changeLog = changeLog;
         this.config = config;
+        this.feedStore = feedStore;
         this.taskRegistry = taskRegistry;
 
         setLayout(new BorderLayout());
@@ -253,6 +256,14 @@ public class AgenticRoutinesPanel extends JPanel {
         sidebarContent.add(Box.createVerticalStrut(4));
         sidebarContent.add(selectStaleBtn);
 
+        // --- Separator ---
+        sidebarContent.add(Box.createVerticalStrut(12));
+        sidebarContent.add(new JSeparator());
+        sidebarContent.add(Box.createVerticalStrut(8));
+
+        // --- Upcoming Section ---
+        addUpcomingSection();
+
         sidebarContent.add(Box.createVerticalGlue());
         sidebarContent.revalidate();
         sidebarContent.repaint();
@@ -318,6 +329,64 @@ public class AgenticRoutinesPanel extends JPanel {
         }
 
         sidebarContent.add(Box.createVerticalStrut(4));
+    }
+
+    private void addUpcomingSection() {
+        addSidebarSection("UPCOMING");
+
+        List<OperationalFeedItem> overdue = feedStore.getOverdue();
+        List<OperationalFeedItem> upcoming = feedStore.getUpcoming(7);
+
+        if (overdue.isEmpty() && upcoming.isEmpty()) {
+            JLabel emptyLabel = new JLabel("No upcoming items");
+            emptyLabel.setFont(emptyLabel.getFont().deriveFont(Font.ITALIC, 10f));
+            emptyLabel.setForeground(new Color(150, 150, 160));
+            emptyLabel.setAlignmentX(LEFT_ALIGNMENT);
+            sidebarContent.add(emptyLabel);
+        } else {
+            // Overdue items in red
+            for (OperationalFeedItem item : overdue) {
+                JLabel itemLabel = new JLabel(item.toDisplayString());
+                itemLabel.setFont(itemLabel.getFont().deriveFont(10f));
+                itemLabel.setForeground(new Color(244, 67, 54));
+                itemLabel.setToolTipText("OVERDUE | " + (item.getNotes() != null ? item.getNotes() : ""));
+                itemLabel.setAlignmentX(LEFT_ALIGNMENT);
+                itemLabel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 18));
+                sidebarContent.add(itemLabel);
+            }
+            // Upcoming items
+            int shown = 0;
+            for (OperationalFeedItem item : upcoming) {
+                if (item.isOverdue()) continue; // already shown above
+                if (shown >= 5) break;
+                JLabel itemLabel = new JLabel(item.toDisplayString());
+                itemLabel.setFont(itemLabel.getFont().deriveFont(10f));
+                itemLabel.setForeground(new Color(80, 80, 90));
+                itemLabel.setToolTipText(item.getType() + " | " + (item.getNotes() != null ? item.getNotes() : ""));
+                itemLabel.setAlignmentX(LEFT_ALIGNMENT);
+                itemLabel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 18));
+                sidebarContent.add(itemLabel);
+                shown++;
+            }
+        }
+
+        sidebarContent.add(Box.createVerticalStrut(4));
+
+        // Add item button
+        JButton addItemBtn = new JButton("+ Add Item");
+        addItemBtn.setFont(addItemBtn.getFont().deriveFont(10f));
+        addItemBtn.setAlignmentX(LEFT_ALIGNMENT);
+        addItemBtn.setMaximumSize(new Dimension(250, 24));
+        addItemBtn.addActionListener(e -> {
+            Frame owner = (Frame) SwingUtilities.getWindowAncestor(this);
+            OperationalFeedDialog dialog = new OperationalFeedDialog(owner);
+            dialog.setVisible(true);
+            if (!dialog.wasCancelled()) {
+                feedStore.addItem(dialog.getResult());
+                rebuildSidebar();
+            }
+        });
+        sidebarContent.add(addItemBtn);
     }
 
     private void updateRefreshSelectedButton() {
