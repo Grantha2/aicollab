@@ -4,17 +4,17 @@ package collab;
 // PromptBuilder.java — Builds all prompt types for the debate cycle.
 //
 // WHAT THIS CLASS DOES (one sentence):
-// Assembles the multi-layered "onion" prompts for Phase 1, Phase 2,
+// Assembles the multi-layered context prompts for Phase 1, Phase 2,
 // and Phase 3 by combining team context, agent identity, stakeholder
 // profile, conversation history, and the user's question.
 //
 // HOW IT FITS THE ARCHITECTURE:
-// Orchestrator calls PromptBuilder's methods to construct the prompts
+// Maestro calls PromptBuilder's methods to construct the prompts
 // before sending them to each LlmClient. PromptBuilder doesn't make
 // any API calls itself — it only builds the text.
 //
-// THE ONION MODEL (layered context):
-// Every API call carries three layers of context, innermost to outermost:
+// CONTEXT LAYERING ARCHITECTURE (CLA):
+// Every API call carries multiple layers of context, from foundation to surface:
 //   1. TEAM CONTEXT    — shared by all agents (what kind of panel this is)
 //   2. AGENT IDENTITY  — unique per model (AgentProfile.toBriefing())
 //   3. STAKEHOLDER     — who's asking (StakeholderProfile.toBriefing())
@@ -28,7 +28,7 @@ package collab;
 
 public class PromptBuilder {
 
-    // The "middle layer" of the onion — shared by all agents.
+    // The team context layer — shared by all agents.
     // Tells every model what kind of team they're part of.
 	static final String DEFAULT_TEAM_CONTEXT =
 			   "=== COLLABORATION CONTEXT ===\n"
@@ -46,6 +46,7 @@ public class PromptBuilder {
     // Injected via constructor so this class doesn't depend on global state.
     private final ConversationContext context;
     private final String teamContext;
+    private final ContextController controller;
 
     // ============================================================
     // Constructor.
@@ -55,17 +56,40 @@ public class PromptBuilder {
     //             context.getHistoryBlock() to include prior cycles.
     // ============================================================
     public PromptBuilder(ConversationContext context) {
-        this(context, DEFAULT_TEAM_CONTEXT);
+        this(context, DEFAULT_TEAM_CONTEXT, null);
     }
 
     public PromptBuilder(ConversationContext context, String teamContext) {
+        this(context, teamContext, null);
+    }
+
+    public PromptBuilder(ConversationContext context, String teamContext, ContextController controller) {
         this.context = context;
         this.teamContext = teamContext;
+        this.controller = controller;
+    }
+
+    // Layer helpers that respect ContextController toggles
+    private String effectiveTeamContext() {
+        if (controller != null && !controller.shouldIncludeTeamContext()) return "";
+        return teamContext;
+    }
+    private String effectiveAgentBriefing(AgentProfile agent) {
+        if (controller != null && !controller.shouldIncludeAgentIdentity()) return "";
+        return agent.toBriefing();
+    }
+    private String effectiveStakeholderBriefing(StakeholderProfile s) {
+        if (controller != null && !controller.shouldIncludeStakeholderProfile()) return "";
+        return s.toBriefing();
+    }
+    private String effectiveHistory() {
+        if (controller != null && !controller.shouldIncludeHistory()) return "";
+        return context.getHistoryBlock();
     }
 
     // ============================================================
-    // buildPhase1Prompt() — Assembles the full "onion" prompt for
-    // Phase 1 (independent responses).
+    // buildPhase1Prompt() — Assembles the full layered context prompt
+    // for Phase 1 (independent responses).
     //
     // Each model gets: team context + its agent identity +
     // stakeholder profile + conversation history + the question.
@@ -80,10 +104,10 @@ public class PromptBuilder {
     public String buildPhase1Prompt(AgentProfile agent,
                                     StakeholderProfile stakeholder,
                                     String userPrompt) {
-        return teamContext
-             + agent.toBriefing()
-             + stakeholder.toBriefing()
-             + context.getHistoryBlock()
+        return effectiveTeamContext()
+             + effectiveAgentBriefing(agent)
+             + effectiveStakeholderBriefing(stakeholder)
+             + effectiveHistory()
              + "=== STAKEHOLDER'S QUESTION ===\n"
              + userPrompt;
     }
@@ -92,22 +116,22 @@ public class PromptBuilder {
     // buildSystemInstruction() — Builds the shared system context
     // for the new multi-turn path.
     //
-    // This is the single source of onion context and should be
+    // This is the single source of layered context and should be
     // passed as the system instruction for all phases.
     // ============================================================
     public String buildSystemInstruction(AgentProfile agent,
                                          StakeholderProfile stakeholder) {
-        return teamContext
-             + agent.toBriefing()
-             + stakeholder.toBriefing()
-             + context.getHistoryBlock();
+        return effectiveTeamContext()
+             + effectiveAgentBriefing(agent)
+             + effectiveStakeholderBriefing(stakeholder)
+             + effectiveHistory();
     }
 
     // ============================================================
     // buildPhase1UserMessage() — Builds only the user question
     // block for Phase 1 in the new multi-turn path.
     //
-    // No onion wrapping is included here because shared context
+    // No context layering is included here because shared context
     // comes from buildSystemInstruction(...).
     // ============================================================
     public String buildPhase1UserMessage(String userPrompt) {
@@ -145,11 +169,11 @@ public class PromptBuilder {
         StringBuilder sb = new StringBuilder();
 
         // Layer 1: Agent identity (stay in character during reaction)
-        sb.append(teamContext);
-        sb.append(agent.toBriefing());
+        sb.append(effectiveTeamContext());
+        sb.append(effectiveAgentBriefing(agent));
 
         // Layer 2: Stakeholder context (remember who you're advising)
-        sb.append(stakeholder.toBriefing());
+        sb.append(effectiveStakeholderBriefing(stakeholder));
 
         // Layer 3: The cross-reaction task
         sb.append("THE ORIGINAL QUESTION:\n");
@@ -218,7 +242,7 @@ public class PromptBuilder {
     // Claude synthesizes all perspectives into a structured report.
     //
     // This is the most important prompt in the system. It tells
-    // Claude (as orchestrator) to analyze ALL six outputs and
+    // Claude (as maestro) to analyze ALL six outputs and
     // produce a report with agreement, disagreement, insights,
     // and a stakeholder-specific recommendation.
     //

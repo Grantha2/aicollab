@@ -9,7 +9,7 @@ deadline. Grant has built v0.3 solo; the other three are onboarding from break.
 The platform runs a 3-phase debate cycle: Claude, GPT, and Gemini each respond
 independently to a user's prompt, then react to each other's responses, then
 Claude synthesizes everything into a structured report. Every API call carries
-a three-layer "onion" of context: team context, agent identity (each model has
+a three-layer "layered context" of context: team context, agent identity (each model has
 a distinct perspective), and the active team member's profile.
 
 ## Current State (v0.3)
@@ -30,7 +30,7 @@ Key methods:
 - main() — CLI loop with hotseat selection, multi-line input, safeguards
 - selectStakeholder() — profile selection menu
 - formatStakeholderBriefing() — converts active profile to prompt context
-- buildAgentPrompt() — assembles the full onion (team + agent + member + prompt)
+- buildAgentPrompt() — assembles the full layered context (team + agent + member + prompt)
 - runDebateCycle() — orchestrates all 3 phases
 - buildReactionPrompt() — Phase 2 prompt with agent identity + peer responses
 - buildSynthesisPrompt() — Phase 3 prompt with all 6 outputs + member context
@@ -60,7 +60,7 @@ The three AI agents debated the project's roadmap. Key consensus and tensions:
 3. Multi-user collaboration must be scoped WAY down (session handoff, not
    real-time WebSockets)
 4. Conversation persistence + simple GUI are the MVP features
-5. Prompt engineering (the onion model) is the project's strategic asset
+5. Prompt engineering (the layered context model) is the project's strategic asset
 
 ### Key Disagreements:
 - INCREMENTAL vs BIG-BANG refactor: Claude says extract classes one at a time
@@ -120,7 +120,7 @@ built-ins.
 - Proprietary orchestration model replacing Claude as synthesizer
 - Web-based interface for real multi-user access
 - Async stakeholder input
-- Dynamic debate rounds (orchestrator decides if more rounds needed)
+- Dynamic debate rounds (maestro decides if more rounds needed)
 - Model-agnostic plugin system
 - Bias detection in synthesis phase
 - Cost dashboard

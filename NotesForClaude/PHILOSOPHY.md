@@ -38,7 +38,7 @@ ai-collab/
 ├── pom.xml                      ← Maven config + dependencies
 └── src/main/java/collab/
     ├── Main.java                ← Entry point, CLI loop, hotseat selection
-    ├── Orchestrator.java        ← Runs the 3-phase debate cycle
+    ├── Maestro.java        ← Runs the 3-phase debate cycle
     ├── LlmClient.java           ← Interface (contract every model must follow)
     ├── AnthropicClient.java     ← Claude API calls
     ├── OpenAiClient.java        ← GPT API calls
@@ -49,8 +49,8 @@ ai-collab/
 ### What each file does (one sentence each):
 
 - **Main.java** reads user input, manages the hotseat menu, and calls the
-  Orchestrator — it's the front door, not the brain.
-- **Orchestrator.java** runs the 3-phase debate (independent → reaction →
+  Maestro — it's the front door, not the brain.
+- **Maestro.java** runs the 3-phase debate (independent → reaction →
   synthesis) by calling LlmClients and building prompts — this is the brain.
 - **LlmClient.java** is an interface with one method: `sendMessage(prompt) →
   response` — it's the contract that every AI model must follow.
@@ -67,15 +67,15 @@ ai-collab/
 
 This interface is three lines of code but it's the design backbone. It means:
 - Adding a new model (Llama, Mistral, your own) = one new file that implements
-  the same interface. No changes to Orchestrator.
+  the same interface. No changes to Maestro.
 - Testing without API calls = create a MockClient that returns canned responses.
   No money spent, no network needed.
 - Your professor sees polymorphism used for a real purpose, not a textbook
   exercise.
 
-## The Onion Model (How We Give AI Context)
+## Context Layering Architecture (How We Give AI Context)
 
-Every API call carries three layers of context, innermost to outermost:
+Every API call carries multiple layers of context, from foundation to surface:
 
 1. **Team context** — shared by all agents: "You are one of three AI
    collaborators helping a student team build their final project."

@@ -11,7 +11,7 @@ A single Main.java (~1,000 lines, zero external dependencies) that runs a
 complete 3-phase debate cycle using Java 21's built-in HttpClient. The user
 selects a stakeholder profile from a hotseat menu (CEO, CTO, CFO, or VP
 Product) — each with name, title, KPIs, decision authority, and background.
-Every API call carries a three-layer "onion" of context: (1) team context
+Every API call carries a three-layer "layered" of context: (1) team context
 describing the advisory panel, (2) an agent identity giving each model a
 distinct role — Claude as Strategy & Risk Analyst, GPT as Innovation &
 Opportunity Analyst, Gemini as Technical Feasibility Lead — and (3) the active
@@ -19,7 +19,7 @@ stakeholder's full profile so the panel knows who they're advising. Phase 1
 sends the stakeholder's prompt independently to all three models. Phase 2
 passes each model the other two responses and asks it to react from its
 assigned perspective — challenging, refining, or agreeing. Phase 3 sends all
-six outputs to Claude as orchestrator, which synthesizes a structured report
+six outputs to Claude as maestro, which synthesizes a structured report
 covering areas of agreement, disagreement, key insights, and a
 stakeholder-specific recommendation. Cost safeguards include a confirmation
 step before every cycle, a post-cycle pause with running API call counts, and
@@ -190,7 +190,7 @@ the 5-week deadline, but they define where the platform is headed:
 - Proprietary orchestration model to replace Claude as synthesizer
 - Web-based interface (replacing Swing) for real multi-user access
 - Async stakeholder input (submit perspectives at different times)
-- Dynamic debate rounds (orchestrator decides if more rounds are needed)
+- Dynamic debate rounds (maestro decides if more rounds are needed)
 - Model-agnostic plugin system (add new LLMs without code changes)
 - Bias detection layer in the synthesis phase
 - Cost dashboard tracking token usage per model per session
