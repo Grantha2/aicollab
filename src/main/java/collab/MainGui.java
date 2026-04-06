@@ -32,6 +32,10 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     private String activeView = VIEW_EXECUTIVE_SUITE;
     private ButtonGroup viewGroup;
 
+    // Shared debate components (re-parented across views)
+    private JPanel debateContentPanel;
+    private JPanel debateToolbar;
+
     private JComboBox<String> stakeholderCombo;
     private JComboBox<String> profileCombo;
     private JPanel claudeStream;
@@ -45,8 +49,12 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     private JLabel statusLabel;
     private int cycleCount = 0;
 
+    // View panels that receive re-parented components
+    private JPanel execContentArea;
+    private JPanel debateViewPanel;
+
     public MainGui() {
-        super("AI Collaboration Platform — Executive Suite");
+        super("AI Collaboration Platform \u2014 Executive Suite");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout(8, 8));
 
@@ -58,7 +66,6 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         suiteButtons = buttonStore.loadButtons();
 
         setJMenuBar(buildMenuBar());
-        add(buildToolbar(), BorderLayout.NORTH);
         add(buildViewContainer(), BorderLayout.CENTER);
         add(buildStatusBar(), BorderLayout.SOUTH);
         setSize(1500, 900);
@@ -130,25 +137,24 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
 
     private void switchView(String viewName) {
         activeView = viewName;
+
+        // Re-parent shared debate components into the active view
+        if (VIEW_EXECUTIVE_SUITE.equals(viewName)) {
+            execContentArea.add(debateToolbar, BorderLayout.NORTH);
+            execContentArea.add(debateContentPanel, BorderLayout.CENTER);
+        } else if (VIEW_DEBATE.equals(viewName)) {
+            debateViewPanel.add(debateToolbar, BorderLayout.NORTH);
+            debateViewPanel.add(debateContentPanel, BorderLayout.CENTER);
+        }
+        // Agentic view doesn't need debate components
+
         viewCardLayout.show(viewContainer, viewName);
         setTitle("AI Collaboration Platform \u2014 " + viewName);
         statusLabel.setText("Switched to " + viewName + " view.");
-    }
 
-    private JComponent buildToolbar() {
-        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        stakeholderCombo = new JComboBox<>();
-        profileCombo = new JComboBox<>();
-        profileCombo.addActionListener(e -> onProfileComboChanged());
-        JButton runButton = new JButton("Run Debate");
-        runButton.addActionListener(e -> onRunDebate());
-
-        panel.add(new JLabel("Stakeholder:"));
-        panel.add(stakeholderCombo);
-        panel.add(new JLabel("Profile:"));
-        panel.add(profileCombo);
-        panel.add(runButton);
-        return panel;
+        // Force layout refresh after re-parenting
+        viewContainer.revalidate();
+        viewContainer.repaint();
     }
 
     private JComponent buildButtonPanel() {
@@ -158,28 +164,53 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     }
 
     /**
+     * Builds the debate toolbar with stakeholder selector, profile selector,
+     * and run debate button. This toolbar is shared between Executive Suite
+     * and Debate views.
+     */
+    private JPanel buildDebateToolbar() {
+        debateToolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+        stakeholderCombo = new JComboBox<>();
+        profileCombo = new JComboBox<>();
+        profileCombo.addActionListener(e -> onProfileComboChanged());
+        JButton runButton = new JButton("Run Debate");
+        runButton.addActionListener(e -> onRunDebate());
+
+        debateToolbar.add(new JLabel("Stakeholder:"));
+        debateToolbar.add(stakeholderCombo);
+        debateToolbar.add(Box.createHorizontalStrut(8));
+        debateToolbar.add(new JLabel("Profile:"));
+        debateToolbar.add(profileCombo);
+        debateToolbar.add(Box.createHorizontalStrut(8));
+        debateToolbar.add(runButton);
+        return debateToolbar;
+    }
+
+    /**
      * Builds the view container that holds all three views with CardLayout.
-     * Each view is a distinct layout:
-     *   - Executive Suite: button panel (left) + debate streams + prompt (right)
-     *   - Debate & Conversation: full-width debate streams + prompt (no button panel)
-     *   - Agentic Routines: placeholder panel for future development
      */
     private JComponent buildViewContainer() {
         viewCardLayout = new CardLayout();
         viewContainer = new JPanel(viewCardLayout);
 
-        // Build shared debate/prompt components
+        // Build shared debate components first
         buildDebateComponents();
+        buildDebateToolbar();
+        debateContentPanel = buildDebateContentPanel();
 
-        // Executive Suite view: button panel + main content
+        // Executive Suite view: button panel (left) + debate content (right)
         JPanel execView = new JPanel(new BorderLayout(8, 8));
         execView.add(buildButtonPanel(), BorderLayout.WEST);
-        execView.add(buildMainPanel(), BorderLayout.CENTER);
+        execContentArea = new JPanel(new BorderLayout());
+        execContentArea.add(debateToolbar, BorderLayout.NORTH);
+        execContentArea.add(debateContentPanel, BorderLayout.CENTER);
+        execView.add(execContentArea, BorderLayout.CENTER);
         viewContainer.add(execView, VIEW_EXECUTIVE_SUITE);
 
-        // Debate view: full-width streams + prompt (reuses same stream panels)
-        JPanel debateView = buildDebateOnlyView();
-        viewContainer.add(debateView, VIEW_DEBATE);
+        // Debate & Conversation view: full-width streams with toolbar
+        debateViewPanel = new JPanel(new BorderLayout(8, 8));
+        // Components start in exec view; switchView re-parents them
+        viewContainer.add(debateViewPanel, VIEW_DEBATE);
 
         // Agentic Routines view: placeholder
         viewContainer.add(new AgenticRoutinesPanel(), VIEW_AGENTIC);
@@ -188,8 +219,7 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     }
 
     /**
-     * Creates the shared stream panels and prompt area used by both
-     * Executive Suite and Debate views.
+     * Creates the shared stream panels, synthesis area, and prompt area.
      */
     private void buildDebateComponents() {
         claudeStream = createStreamPanel();
@@ -209,7 +239,12 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         promptArea.setWrapStyleWord(true);
     }
 
-    private JComponent buildMainPanel() {
+    /**
+     * Builds the debate content panel containing model streams, synthesis,
+     * and prompt. This panel is re-parented between Executive Suite and
+     * Debate views when switching.
+     */
+    private JPanel buildDebateContentPanel() {
         JPanel panel = new JPanel(new BorderLayout(8, 8));
 
         JSplitPane leftMidSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
@@ -229,40 +264,11 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
 
         JScrollPane promptScroll = new JScrollPane(promptArea);
         promptScroll.setPreferredSize(new Dimension(0, 180));
-        JPanel promptDock = wrap("Prompt (always visible)", promptScroll);
+        JPanel promptDock = wrap("Prompt", promptScroll);
         promptDock.setPreferredSize(new Dimension(0, 200));
 
         panel.add(mainVerticalSplit, BorderLayout.CENTER);
         panel.add(promptDock, BorderLayout.SOUTH);
-        return panel;
-    }
-
-    /**
-     * Builds the Debate & Conversation view: full-width model streams
-     * with a prominent prompt area. This view hides the button panel
-     * to give maximum screen space to the conversation.
-     */
-    private JPanel buildDebateOnlyView() {
-        JPanel panel = new JPanel(new BorderLayout(8, 8));
-
-        // Info label at top
-        JLabel viewLabel = new JLabel(
-                "  Debate & Conversation View \u2014 Full-width model streams");
-        viewLabel.setFont(viewLabel.getFont().deriveFont(Font.BOLD, 12f));
-        viewLabel.setForeground(new Color(80, 80, 80));
-        viewLabel.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
-        panel.add(viewLabel, BorderLayout.NORTH);
-
-        // Note: The stream panels are shared with the Executive Suite view.
-        // Swing components can only have one parent at a time, so when
-        // switching views, we re-parent them. This is handled in switchView().
-        JLabel placeholder = new JLabel(
-                "<html><center>Switch to this view to see full-width debate streams.<br>" +
-                "Streams and prompt area are shared across views.</center></html>",
-                SwingConstants.CENTER);
-        placeholder.setForeground(Color.GRAY);
-        panel.add(placeholder, BorderLayout.CENTER);
-
         return panel;
     }
 
@@ -477,7 +483,6 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         new SwingWorker<String, Void>() {
             @Override
             protected String doInBackground() {
-                // Use the first available LlmClient (Claude) for simple tasks
                 java.net.http.HttpClient httpClient = java.net.http.HttpClient.newHttpClient();
                 int maxTokens = config.getMaxResponseTokens();
                 LlmClient client = new AnthropicClient(httpClient, config.getClaudeUrl(),
@@ -514,13 +519,11 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         SuiteButton newBtn = null;
 
         if (choice == 0) {
-            // AI-assisted creation
             ButtonCreationAssistantDialog assistant =
                     new ButtonCreationAssistantDialog(this, config, colorMap);
             assistant.setVisible(true);
             newBtn = assistant.getResult();
         } else if (choice == 1) {
-            // Manual editor
             ButtonCreatorDialog dialog = new ButtonCreatorDialog(this, colorMap);
             dialog.setVisible(true);
             newBtn = dialog.getResult();
@@ -657,13 +660,12 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             return;
         }
 
-        // Phase 5b: Don't clear streams — add cycle divider instead
+        // Phase 5b: Don't clear streams \u2014 add cycle divider instead
         cycleCount++;
         if (cycleCount > 1) {
             appendCycleDivider(claudeStream, cycleCount);
             appendCycleDivider(gptStream, cycleCount);
             appendCycleDivider(geminiStream, cycleCount);
-            // Append divider to synthesis area
             synthesisArea.append("\n\n" + "\u2550".repeat(40) + " Cycle " + cycleCount + " " + "\u2550".repeat(40) + "\n\n");
         }
 
@@ -718,7 +720,6 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     @Override
     public void onSynthesis(String synthesis) {
         SwingUtilities.invokeLater(() -> {
-            // Append instead of replace for persistent conversation
             if (synthesisArea.getText().isEmpty()) {
                 synthesisArea.setText(synthesis);
             } else {
