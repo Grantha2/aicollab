@@ -7,6 +7,11 @@ import java.util.List;
 
 public class MainGui extends JFrame implements DebateListener, ButtonPanel.ButtonClickListener {
 
+    // View names for CardLayout
+    private static final String VIEW_EXECUTIVE_SUITE = "Executive Suite";
+    private static final String VIEW_DEBATE = "Debate & Conversation";
+    private static final String VIEW_AGENTIC = "Agentic Routines";
+
     private Config config;
     private ProfileLibrary profileLibrary;
     private ProfileSet activeProfileSet;
@@ -20,6 +25,12 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     private ButtonPanel buttonPanel;
     private ContextController contextController;
     private List<SuiteButton> suiteButtons;
+
+    // View switching
+    private CardLayout viewCardLayout;
+    private JPanel viewContainer;
+    private String activeView = VIEW_EXECUTIVE_SUITE;
+    private ButtonGroup viewGroup;
 
     private JComboBox<String> stakeholderCombo;
     private JComboBox<String> profileCombo;
@@ -48,8 +59,7 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
 
         setJMenuBar(buildMenuBar());
         add(buildToolbar(), BorderLayout.NORTH);
-        add(buildButtonPanel(), BorderLayout.WEST);
-        add(buildMainPanel(), BorderLayout.CENTER);
+        add(buildViewContainer(), BorderLayout.CENTER);
         add(buildStatusBar(), BorderLayout.SOUTH);
         setSize(1500, 900);
         initApplication();
@@ -85,7 +95,44 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         contextMenu.add(clearHistory);
         menuBar.add(contextMenu);
 
+        // View menu
+        JMenu viewMenu = new JMenu("View");
+        viewGroup = new ButtonGroup();
+
+        JRadioButtonMenuItem execView = new JRadioButtonMenuItem(VIEW_EXECUTIVE_SUITE, true);
+        execView.setAccelerator(KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_1,
+                java.awt.event.InputEvent.CTRL_DOWN_MASK));
+        execView.addActionListener(e -> switchView(VIEW_EXECUTIVE_SUITE));
+        viewGroup.add(execView);
+        viewMenu.add(execView);
+
+        JRadioButtonMenuItem debateView = new JRadioButtonMenuItem(VIEW_DEBATE);
+        debateView.setAccelerator(KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_2,
+                java.awt.event.InputEvent.CTRL_DOWN_MASK));
+        debateView.addActionListener(e -> switchView(VIEW_DEBATE));
+        viewGroup.add(debateView);
+        viewMenu.add(debateView);
+
+        JRadioButtonMenuItem agenticView = new JRadioButtonMenuItem(VIEW_AGENTIC);
+        agenticView.setAccelerator(KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_3,
+                java.awt.event.InputEvent.CTRL_DOWN_MASK));
+        agenticView.addActionListener(e -> switchView(VIEW_AGENTIC));
+        viewGroup.add(agenticView);
+        viewMenu.add(agenticView);
+
+        menuBar.add(viewMenu);
+
         return menuBar;
+    }
+
+    private void switchView(String viewName) {
+        activeView = viewName;
+        viewCardLayout.show(viewContainer, viewName);
+        setTitle("AI Collaboration Platform \u2014 " + viewName);
+        statusLabel.setText("Switched to " + viewName + " view.");
     }
 
     private JComponent buildToolbar() {
@@ -110,15 +157,60 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         return buttonPanel;
     }
 
-    private JComponent buildMainPanel() {
-        JPanel panel = new JPanel(new BorderLayout(8, 8));
+    /**
+     * Builds the view container that holds all three views with CardLayout.
+     * Each view is a distinct layout:
+     *   - Executive Suite: button panel (left) + debate streams + prompt (right)
+     *   - Debate & Conversation: full-width debate streams + prompt (no button panel)
+     *   - Agentic Routines: placeholder panel for future development
+     */
+    private JComponent buildViewContainer() {
+        viewCardLayout = new CardLayout();
+        viewContainer = new JPanel(viewCardLayout);
 
+        // Build shared debate/prompt components
+        buildDebateComponents();
+
+        // Executive Suite view: button panel + main content
+        JPanel execView = new JPanel(new BorderLayout(8, 8));
+        execView.add(buildButtonPanel(), BorderLayout.WEST);
+        execView.add(buildMainPanel(), BorderLayout.CENTER);
+        viewContainer.add(execView, VIEW_EXECUTIVE_SUITE);
+
+        // Debate view: full-width streams + prompt (reuses same stream panels)
+        JPanel debateView = buildDebateOnlyView();
+        viewContainer.add(debateView, VIEW_DEBATE);
+
+        // Agentic Routines view: placeholder
+        viewContainer.add(new AgenticRoutinesPanel(), VIEW_AGENTIC);
+
+        return viewContainer;
+    }
+
+    /**
+     * Creates the shared stream panels and prompt area used by both
+     * Executive Suite and Debate views.
+     */
+    private void buildDebateComponents() {
         claudeStream = createStreamPanel();
         gptStream = createStreamPanel();
         geminiStream = createStreamPanel();
         claudeScroll = new JScrollPane(claudeStream);
         gptScroll = new JScrollPane(gptStream);
         geminiScroll = new JScrollPane(geminiStream);
+
+        synthesisArea = new JTextArea();
+        synthesisArea.setEditable(false);
+        synthesisArea.setLineWrap(true);
+        synthesisArea.setWrapStyleWord(true);
+
+        promptArea = new JTextArea();
+        promptArea.setLineWrap(true);
+        promptArea.setWrapStyleWord(true);
+    }
+
+    private JComponent buildMainPanel() {
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
 
         JSplitPane leftMidSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
                 wrap("Claude", claudeScroll),
@@ -130,19 +222,11 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
                 wrap("Gemini", geminiScroll));
         topSplit.setResizeWeight(0.67);
 
-        synthesisArea = new JTextArea();
-        synthesisArea.setEditable(false);
-        synthesisArea.setLineWrap(true);
-        synthesisArea.setWrapStyleWord(true);
-
         JSplitPane mainVerticalSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
                 topSplit,
                 wrap("Synthesis", new JScrollPane(synthesisArea)));
         mainVerticalSplit.setResizeWeight(0.62);
 
-        promptArea = new JTextArea();
-        promptArea.setLineWrap(true);
-        promptArea.setWrapStyleWord(true);
         JScrollPane promptScroll = new JScrollPane(promptArea);
         promptScroll.setPreferredSize(new Dimension(0, 180));
         JPanel promptDock = wrap("Prompt (always visible)", promptScroll);
@@ -150,6 +234,35 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
 
         panel.add(mainVerticalSplit, BorderLayout.CENTER);
         panel.add(promptDock, BorderLayout.SOUTH);
+        return panel;
+    }
+
+    /**
+     * Builds the Debate & Conversation view: full-width model streams
+     * with a prominent prompt area. This view hides the button panel
+     * to give maximum screen space to the conversation.
+     */
+    private JPanel buildDebateOnlyView() {
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+
+        // Info label at top
+        JLabel viewLabel = new JLabel(
+                "  Debate & Conversation View \u2014 Full-width model streams");
+        viewLabel.setFont(viewLabel.getFont().deriveFont(Font.BOLD, 12f));
+        viewLabel.setForeground(new Color(80, 80, 80));
+        viewLabel.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+        panel.add(viewLabel, BorderLayout.NORTH);
+
+        // Note: The stream panels are shared with the Executive Suite view.
+        // Swing components can only have one parent at a time, so when
+        // switching views, we re-parent them. This is handled in switchView().
+        JLabel placeholder = new JLabel(
+                "<html><center>Switch to this view to see full-width debate streams.<br>" +
+                "Streams and prompt area are shared across views.</center></html>",
+                SwingConstants.CENTER);
+        placeholder.setForeground(Color.GRAY);
+        panel.add(placeholder, BorderLayout.CENTER);
+
         return panel;
     }
 
@@ -391,9 +504,28 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
 
     @Override
     public void onCreateButton() {
-        ButtonCreatorDialog dialog = new ButtonCreatorDialog(this, colorMap);
-        dialog.setVisible(true);
-        SuiteButton newBtn = dialog.getResult();
+        String[] options = {"AI Assistant", "Manual Editor"};
+        int choice = JOptionPane.showOptionDialog(this,
+                "How would you like to create your new task button?",
+                "Create New Button",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE,
+                null, options, options[0]);
+
+        SuiteButton newBtn = null;
+
+        if (choice == 0) {
+            // AI-assisted creation
+            ButtonCreationAssistantDialog assistant =
+                    new ButtonCreationAssistantDialog(this, config, colorMap);
+            assistant.setVisible(true);
+            newBtn = assistant.getResult();
+        } else if (choice == 1) {
+            // Manual editor
+            ButtonCreatorDialog dialog = new ButtonCreatorDialog(this, colorMap);
+            dialog.setVisible(true);
+            newBtn = dialog.getResult();
+        }
+
         if (newBtn != null) {
             suiteButtons.add(newBtn);
             buttonStore.saveButtons(suiteButtons);
