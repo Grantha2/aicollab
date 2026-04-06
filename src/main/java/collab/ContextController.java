@@ -20,9 +20,13 @@ public class ContextController {
     private boolean includeAgentIdentity = true;
     private boolean includeStakeholderProfile = true;
     private boolean includeHistory = true;
+    private boolean includeTaskContext = true;
 
     // null = use default from PromptBuilder
     private String teamContextOverride = null;
+
+    // Active task context (set when a task button is clicked)
+    private TaskContext activeTaskContext = null;
 
     // Per-model agent identity toggles (model name → enabled)
     private final Map<String, Boolean> agentToggles = new HashMap<>();
@@ -34,11 +38,16 @@ public class ContextController {
     public boolean shouldIncludeAgentIdentity()     { return includeAgentIdentity; }
     public boolean shouldIncludeStakeholderProfile() { return includeStakeholderProfile; }
     public boolean shouldIncludeHistory()           { return includeHistory; }
+    public boolean shouldIncludeTaskContext()       { return includeTaskContext; }
 
     public void setIncludeTeamContext(boolean v)       { this.includeTeamContext = v; }
     public void setIncludeAgentIdentity(boolean v)     { this.includeAgentIdentity = v; }
     public void setIncludeStakeholderProfile(boolean v) { this.includeStakeholderProfile = v; }
     public void setIncludeHistory(boolean v)           { this.includeHistory = v; }
+    public void setIncludeTaskContext(boolean v)       { this.includeTaskContext = v; }
+
+    public TaskContext getActiveTaskContext()          { return activeTaskContext; }
+    public void setActiveTaskContext(TaskContext ctx)  { this.activeTaskContext = ctx; }
 
     public String getTeamContextOverride()             { return teamContextOverride; }
     public void setTeamContextOverride(String override) { this.teamContextOverride = override; }

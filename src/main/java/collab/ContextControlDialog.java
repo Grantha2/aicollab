@@ -33,6 +33,7 @@ public class ContextControlDialog extends JDialog {
         tabs.addTab("Team Context", buildTeamContextTab());
         tabs.addTab("Agent Identities", buildAgentIdentitiesTab());
         tabs.addTab("Stakeholder", buildStakeholderTab());
+        tabs.addTab("Task Context", buildTaskContextTab());
         tabs.addTab("History", buildHistoryTab());
         tabs.addTab("Prompt Preview", buildPreviewTab());
 
@@ -163,6 +164,113 @@ public class ContextControlDialog extends JDialog {
         return panel;
     }
 
+    private JPanel buildTaskContextTab() {
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        panel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+
+        JCheckBox toggle = new JCheckBox("Include task context in prompts",
+                controller.shouldIncludeTaskContext());
+        toggle.addActionListener(e -> controller.setIncludeTaskContext(toggle.isSelected()));
+        panel.add(toggle, BorderLayout.NORTH);
+
+        TaskContext activeTask = controller.getActiveTaskContext();
+
+        JPanel fieldsPanel = new JPanel(new GridLayout(0, 1, 4, 4));
+
+        // Task name
+        JPanel namePanel = new JPanel(new BorderLayout());
+        namePanel.setBorder(BorderFactory.createTitledBorder("Active Task"));
+        JLabel taskLabel = new JLabel(activeTask != null ? activeTask.getTaskName() : "(No task selected)");
+        taskLabel.setFont(taskLabel.getFont().deriveFont(Font.BOLD, 13f));
+        namePanel.add(taskLabel, BorderLayout.CENTER);
+        fieldsPanel.add(namePanel);
+
+        // Prompt template
+        JPanel templatePanel = new JPanel(new BorderLayout());
+        templatePanel.setBorder(BorderFactory.createTitledBorder("Prompt Template"));
+        JTextArea templateArea = new JTextArea(
+                activeTask != null && activeTask.getPromptTemplate() != null
+                        ? activeTask.getPromptTemplate() : "(none)");
+        templateArea.setEditable(false);
+        templateArea.setLineWrap(true);
+        templateArea.setWrapStyleWord(true);
+        templateArea.setRows(3);
+        templatePanel.add(new JScrollPane(templateArea), BorderLayout.CENTER);
+        fieldsPanel.add(templatePanel);
+
+        // Style instructions
+        JPanel stylePanel = new JPanel(new BorderLayout());
+        stylePanel.setBorder(BorderFactory.createTitledBorder("Style & Tone"));
+        JTextArea styleArea = new JTextArea(
+                activeTask != null && activeTask.getStyleInstructions() != null
+                        ? activeTask.getStyleInstructions() : "(none)");
+        styleArea.setEditable(false);
+        styleArea.setLineWrap(true);
+        styleArea.setWrapStyleWord(true);
+        styleArea.setRows(2);
+        stylePanel.add(new JScrollPane(styleArea), BorderLayout.CENTER);
+        fieldsPanel.add(stylePanel);
+
+        // Follow-up answers
+        JPanel answersPanel = new JPanel(new BorderLayout());
+        answersPanel.setBorder(BorderFactory.createTitledBorder("Follow-Up Answers"));
+        StringBuilder answerText = new StringBuilder();
+        if (activeTask != null && !activeTask.getFollowUpAnswers().isEmpty()) {
+            for (var entry : activeTask.getFollowUpAnswers().entrySet()) {
+                answerText.append("Q: ").append(entry.getKey()).append("\n");
+                answerText.append("A: ").append(entry.getValue()).append("\n\n");
+            }
+        } else {
+            answerText.append("(no answers collected yet)");
+        }
+        JTextArea answersArea = new JTextArea(answerText.toString());
+        answersArea.setEditable(false);
+        answersArea.setLineWrap(true);
+        answersArea.setWrapStyleWord(true);
+        answersArea.setRows(4);
+        answersPanel.add(new JScrollPane(answersArea), BorderLayout.CENTER);
+        fieldsPanel.add(answersPanel);
+
+        // Mode indicator
+        JPanel modePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        modePanel.setBorder(BorderFactory.createTitledBorder("Execution Mode"));
+        String modeText = activeTask != null
+                ? (activeTask.isSimpleMode() ? "Simple (single API call)" : "Multi-prompt (full debate cycle)")
+                : "(no task selected)";
+        modePanel.add(new JLabel(modeText));
+        fieldsPanel.add(modePanel);
+
+        panel.add(new JScrollPane(fieldsPanel), BorderLayout.CENTER);
+
+        // Preview assembled task block
+        JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JButton previewBtn = new JButton("Preview Task Block");
+        previewBtn.addActionListener(e -> {
+            if (activeTask != null) {
+                JOptionPane.showMessageDialog(this,
+                        activeTask.buildTaskBlock(),
+                        "Task Context Block", JOptionPane.INFORMATION_MESSAGE);
+            } else {
+                JOptionPane.showMessageDialog(this,
+                        "No active task context.",
+                        "Task Context Block", JOptionPane.INFORMATION_MESSAGE);
+            }
+        });
+        JButton clearBtn = new JButton("Clear Task");
+        clearBtn.addActionListener(e -> {
+            controller.setActiveTaskContext(null);
+            taskLabel.setText("(No task selected)");
+            templateArea.setText("(none)");
+            styleArea.setText("(none)");
+            answersArea.setText("(no answers collected yet)");
+        });
+        bottomPanel.add(previewBtn);
+        bottomPanel.add(clearBtn);
+        panel.add(bottomPanel, BorderLayout.SOUTH);
+
+        return panel;
+    }
+
     private JPanel buildHistoryTab() {
         JPanel panel = new JPanel(new BorderLayout(8, 8));
         panel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
@@ -253,6 +361,14 @@ public class ContextControlDialog extends JDialog {
                 sb.append(activeProfileSet.getStakeholders().get(0).toBriefing());
             } else {
                 sb.append("(disabled)\n");
+            }
+            sb.append("\n");
+
+            sb.append("=== TASK CONTEXT ===\n");
+            if (controller.shouldIncludeTaskContext() && controller.getActiveTaskContext() != null) {
+                sb.append(controller.getActiveTaskContext().buildTaskBlock());
+            } else {
+                sb.append("(disabled or no active task)\n");
             }
             sb.append("\n");
 

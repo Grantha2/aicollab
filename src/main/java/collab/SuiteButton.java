@@ -1,20 +1,26 @@
 package collab;
 
 // ============================================================
-// SuiteButton.java — Data model for one action button in the
+// SuiteButton.java — Data model for one task button in the
 // Executive Suite GUI.
 //
 // WHAT THIS CLASS DOES (one sentence):
-// Stores the label, category, icon path, action type, and
-// parameters for a single button that appears in the side panel.
+// Stores the task template definition for one button: its prompt
+// template, follow-up questions, style instructions, and whether
+// it runs as a simple single-API call or a full debate cycle.
 //
-// KEY DESIGN DECISION:
-// Color is NOT stored per-button. Color comes from the category
-// via CategoryColorMap. Change a button's category and its color
-// changes automatically.
+// KEY DESIGN DECISIONS:
+// - Color is NOT stored per-button. Color comes from the category
+//   via CategoryColorMap.
+// - Each button is a TASK TEMPLATE, not a feature shortcut.
+//   It encodes the user's intent and auto-fills context.
+// - simpleMode=true means single API call to one model;
+//   simpleMode=false means full 3-phase Maestro debate cycle.
 // ============================================================
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -29,9 +35,17 @@ public class SuiteButton {
     private Map<String, String> actionParams;
     private int sortOrder;
 
+    // Task template fields
+    private String promptTemplate;
+    private List<String> followUpQuestions;
+    private String styleInstructions;
+    private boolean simpleMode;
+
     public SuiteButton() {
         this.id = UUID.randomUUID().toString();
         this.actionParams = new HashMap<>();
+        this.followUpQuestions = new ArrayList<>();
+        this.simpleMode = false;
     }
 
     public SuiteButton(String label, String category, String actionType) {
@@ -41,6 +55,7 @@ public class SuiteButton {
         this.actionType = actionType;
     }
 
+    // Original getters/setters
     public String getId()          { return id; }
     public String getLabel()       { return label; }
     public String getCategory()    { return category; }
@@ -65,5 +80,44 @@ public class SuiteButton {
 
     public String getParam(String key) {
         return actionParams.get(key);
+    }
+
+    // Task template getters/setters
+    public String getPromptTemplate()              { return promptTemplate; }
+    public List<String> getFollowUpQuestions()      { return followUpQuestions; }
+    public String getStyleInstructions()           { return styleInstructions; }
+    public boolean isSimpleMode()                  { return simpleMode; }
+
+    public void setPromptTemplate(String template) { this.promptTemplate = template; }
+    public void setFollowUpQuestions(List<String> questions) {
+        this.followUpQuestions = questions != null ? questions : new ArrayList<>();
+    }
+    public void setStyleInstructions(String style) { this.styleInstructions = style; }
+    public void setSimpleMode(boolean simple)      { this.simpleMode = simple; }
+
+    /**
+     * Builds a TaskContext from this button's template fields.
+     * Returns null if this button has no task template data.
+     */
+    public TaskContext toTaskContext() {
+        if (promptTemplate == null && (followUpQuestions == null || followUpQuestions.isEmpty())
+                && styleInstructions == null) {
+            return null;
+        }
+        TaskContext ctx = new TaskContext();
+        ctx.setTaskName(label);
+        ctx.setPromptTemplate(promptTemplate);
+        ctx.setFollowUpQuestions(followUpQuestions != null ? new ArrayList<>(followUpQuestions) : new ArrayList<>());
+        ctx.setStyleInstructions(styleInstructions);
+        ctx.setSimpleMode(simpleMode);
+        return ctx;
+    }
+
+    /**
+     * Returns true if this button is a task template (has prompt template,
+     * follow-up questions, or style instructions defined).
+     */
+    public boolean isTaskTemplate() {
+        return "TASK_TEMPLATE".equals(actionType);
     }
 }

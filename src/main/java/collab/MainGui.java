@@ -267,6 +267,7 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     @Override
     public void onButtonClicked(SuiteButton button) {
         switch (button.getActionType()) {
+            case "TASK_TEMPLATE" -> onExecuteTaskTemplate(button);
             case "RUN_DEBATE" -> onRunDebate();
             case "SWITCH_PROFILE" -> onSelectProfileSet();
             case "CREATE_PROFILE" -> onCreateProfileSet();
@@ -283,6 +284,109 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             }
             default -> statusLabel.setText("Unknown action: " + button.getActionType());
         }
+    }
+
+    /**
+     * Executes a task template button: collects follow-up answers from the user,
+     * builds a task-enriched prompt, and routes to simple or debate mode.
+     */
+    private void onExecuteTaskTemplate(SuiteButton button) {
+        TaskContext taskCtx = button.toTaskContext();
+        if (taskCtx == null) {
+            statusLabel.setText("Task button has no template defined.");
+            return;
+        }
+
+        // Collect follow-up answers via dialog
+        if (taskCtx.getFollowUpQuestions() != null && !taskCtx.getFollowUpQuestions().isEmpty()) {
+            TaskQuestionDialog questionDialog = new TaskQuestionDialog(
+                    this, button.getLabel(), taskCtx.getFollowUpQuestions());
+            questionDialog.setVisible(true);
+            if (questionDialog.wasCancelled()) {
+                statusLabel.setText("Task cancelled.");
+                return;
+            }
+            for (var entry : questionDialog.getAnswers().entrySet()) {
+                taskCtx.answerQuestion(entry.getKey(), entry.getValue());
+            }
+        }
+
+        // Store active task context in controller
+        contextController.setActiveTaskContext(taskCtx);
+
+        // Build the enriched prompt
+        String userText = promptArea.getText().trim();
+        String enrichedPrompt = buildTaskEnrichedPrompt(taskCtx, userText);
+
+        if (button.isSimpleMode()) {
+            onRunSimpleTask(enrichedPrompt);
+        } else {
+            promptArea.setText(enrichedPrompt);
+            onRunDebate();
+        }
+    }
+
+    /**
+     * Builds a prompt enriched with task context: template, style, and answers.
+     */
+    private String buildTaskEnrichedPrompt(TaskContext taskCtx, String userText) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(taskCtx.buildTaskBlock());
+
+        // Substitute {user_input} in the template or append user text
+        if (taskCtx.getPromptTemplate() != null && taskCtx.getPromptTemplate().contains("{user_input}")) {
+            sb.append("User Input:\n");
+            sb.append(taskCtx.getPromptTemplate().replace("{user_input}",
+                    userText.isEmpty() ? "(not provided)" : userText));
+        } else if (!userText.isEmpty()) {
+            sb.append("User Input:\n").append(userText);
+        }
+
+        return sb.toString();
+    }
+
+    /**
+     * Runs a simple single-API-call task using Claude (first available model).
+     * Displays the result in the Claude stream panel.
+     */
+    private void onRunSimpleTask(String prompt) {
+        if (maestro == null || activeProfileSet == null) {
+            statusLabel.setText("No model configured. Check settings.");
+            return;
+        }
+        statusLabel.setText("Running simple task...");
+
+        cycleCount++;
+        if (cycleCount > 1) {
+            appendCycleDivider(claudeStream, cycleCount);
+        }
+
+        new SwingWorker<String, Void>() {
+            @Override
+            protected String doInBackground() {
+                // Use the first available LlmClient (Claude) for simple tasks
+                java.net.http.HttpClient httpClient = java.net.http.HttpClient.newHttpClient();
+                int maxTokens = config.getMaxResponseTokens();
+                LlmClient client = new AnthropicClient(httpClient, config.getClaudeUrl(),
+                        config.getClaudeKey(), config.getClaudeModel(), maxTokens);
+                return client.sendMessage(prompt);
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    String response = get();
+                    SwingUtilities.invokeLater(() -> {
+                        appendCard("Claude", "Task Result",
+                                response, tint(Color.ORANGE, 0.9), false);
+                        statusLabel.setText("Simple task complete.");
+                    });
+                } catch (Exception e) {
+                    SwingUtilities.invokeLater(() ->
+                            statusLabel.setText("Task error: " + e.getMessage()));
+                }
+            }
+        }.execute();
     }
 
     @Override
