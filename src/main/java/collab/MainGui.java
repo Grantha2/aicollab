@@ -326,6 +326,7 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             // Build task registry with built-in tasks
             AgenticTaskRegistry taskRegistry = new AgenticTaskRegistry();
             taskRegistry.register(new StartYourDayTask(feedStore));
+            taskRegistry.register(new OutboundMessagesTask(feedStore, relationshipStore));
             taskRegistry.register(new ContextRefreshTask(dailyUpdateFn));
             taskRegistry.register(new MeetingPrepTask(feedStore, relationshipStore));
             taskRegistry.register(new InitiativeReviewTask(initiativeStore));
