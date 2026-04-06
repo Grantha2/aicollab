@@ -154,6 +154,11 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         setTitle("AI Collaboration Platform \u2014 " + viewName);
         statusLabel.setText("Switched to " + viewName + " view.");
 
+        // Trigger session-start check when agentic tab becomes visible
+        if (VIEW_AGENTIC.equals(viewName) && agenticPanel != null) {
+            agenticPanel.onTabShown();
+        }
+
         viewContainer.revalidate();
         viewContainer.repaint();
     }

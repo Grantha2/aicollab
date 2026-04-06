@@ -5,13 +5,16 @@ package collab;
 // context health sidebar and function output / approval queue.
 //
 // WHAT THIS CLASS DOES (one sentence):
-// Displays context freshness as an actionable sidebar and shows
-// agentic function results + approval diff cards in the main area.
+// Displays context freshness as an actionable sidebar with
+// per-field checkboxes, runs agentic functions, and shows
+// approval diff cards for context write-back.
 //
 // KEY DESIGN DECISIONS:
 // - Context health IS the entry point to refresh flows (not passive)
+// - Per-field checkboxes let users select exactly which fields to refresh
 // - Stale fields grouped at top to drive action
 // - Approval cards show current vs proposed with approve/reject
+// - Session-start trigger checks for stale context on first view
 // - Runs Daily Update function via SwingWorker to avoid blocking
 // ============================================================
 
@@ -34,6 +37,13 @@ public class AgenticRoutinesPanel extends JPanel {
     private final JPanel outputArea;        // function output text
     private final JPanel approvalArea;      // approval diff cards
     private final JLabel statusLabel;
+    private final JButton refreshSelectedBtn;
+
+    // Per-field checkbox tracking
+    private final Map<String, JCheckBox> fieldCheckboxes = new LinkedHashMap<>();
+
+    // Session-start trigger state
+    private boolean sessionStartCheckDone = false;
 
     public AgenticRoutinesPanel(OrganizationContext orgContext,
                                  ReconciliationService reconciliation,
@@ -61,19 +71,55 @@ public class AgenticRoutinesPanel extends JPanel {
         statusLabel.setForeground(new Color(100, 100, 110));
         add(statusLabel, BorderLayout.SOUTH);
 
-        // Left sidebar: context health
+        // Left sidebar: context health with checkboxes
+        JPanel leftPanel = new JPanel(new BorderLayout());
+        leftPanel.setBackground(Color.WHITE);
+        leftPanel.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, new Color(220, 220, 230)));
+
         healthPanel = new JPanel();
         healthPanel.setLayout(new BoxLayout(healthPanel, BoxLayout.Y_AXIS));
         healthPanel.setBackground(Color.WHITE);
-        healthPanel.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createMatteBorder(0, 0, 0, 1, new Color(220, 220, 230)),
+        healthPanel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+
+        JScrollPane healthScroll = new JScrollPane(healthPanel);
+        healthScroll.setBorder(null);
+        healthScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        leftPanel.add(healthScroll, BorderLayout.CENTER);
+
+        // Bottom button bar for sidebar
+        JPanel sidebarButtons = new JPanel();
+        sidebarButtons.setLayout(new BoxLayout(sidebarButtons, BoxLayout.Y_AXIS));
+        sidebarButtons.setBackground(Color.WHITE);
+        sidebarButtons.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(1, 0, 0, 0, new Color(220, 220, 230)),
             BorderFactory.createEmptyBorder(8, 8, 8, 8)
         ));
 
-        JScrollPane healthScroll = new JScrollPane(healthPanel);
-        healthScroll.setPreferredSize(new Dimension(260, 0));
-        healthScroll.setBorder(null);
-        healthScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        refreshSelectedBtn = new JButton("Refresh Selected");
+        refreshSelectedBtn.setAlignmentX(LEFT_ALIGNMENT);
+        refreshSelectedBtn.setMaximumSize(new Dimension(240, 30));
+        refreshSelectedBtn.setEnabled(false);
+        refreshSelectedBtn.addActionListener(e -> onRefreshSelected());
+        sidebarButtons.add(refreshSelectedBtn);
+        sidebarButtons.add(Box.createVerticalStrut(4));
+
+        JButton selectAllStaleBtn = new JButton("Select All Stale");
+        selectAllStaleBtn.setAlignmentX(LEFT_ALIGNMENT);
+        selectAllStaleBtn.setMaximumSize(new Dimension(240, 26));
+        selectAllStaleBtn.setFont(selectAllStaleBtn.getFont().deriveFont(11f));
+        selectAllStaleBtn.addActionListener(e -> selectAllStale());
+        sidebarButtons.add(selectAllStaleBtn);
+        sidebarButtons.add(Box.createVerticalStrut(4));
+
+        JButton dailyUpdateBtn = new JButton("Daily Update (All)");
+        dailyUpdateBtn.setAlignmentX(LEFT_ALIGNMENT);
+        dailyUpdateBtn.setMaximumSize(new Dimension(240, 26));
+        dailyUpdateBtn.setFont(dailyUpdateBtn.getFont().deriveFont(11f));
+        dailyUpdateBtn.addActionListener(e -> onDailyUpdate(null));
+        sidebarButtons.add(dailyUpdateBtn);
+
+        leftPanel.add(sidebarButtons, BorderLayout.SOUTH);
+        leftPanel.setPreferredSize(new Dimension(270, 0));
 
         // Main area: output + approvals
         mainPanel = new JPanel(new BorderLayout(0, 12));
@@ -101,8 +147,8 @@ public class AgenticRoutinesPanel extends JPanel {
         mainPanel.add(mainScroll, BorderLayout.CENTER);
 
         // Split pane
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, healthScroll, mainPanel);
-        split.setDividerLocation(260);
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPanel, mainPanel);
+        split.setDividerLocation(270);
         split.setResizeWeight(0.0);
         split.setBorder(null);
         add(split, BorderLayout.CENTER);
@@ -112,10 +158,34 @@ public class AgenticRoutinesPanel extends JPanel {
         showEmptyState();
     }
 
+    // ===================== Session-Start Trigger =====================
+
+    /**
+     * Called when the agentic tab becomes visible. Checks for stale context
+     * and prompts the user if a refresh is recommended.
+     */
+    public void onTabShown() {
+        if (sessionStartCheckDone) return;
+        sessionStartCheckDone = true;
+
+        // Count stale/needs-confirmation fields
+        Map<String, Freshness> report = orgContext.getFreshnessReport();
+        long staleCount = report.values().stream()
+            .filter(f -> f == Freshness.STALE || f == Freshness.NEEDS_CONFIRMATION)
+            .count();
+
+        if (staleCount > 0) {
+            statusLabel.setText(staleCount + " field(s) are stale. Select fields and click 'Refresh Selected' to update.");
+            // Auto-select stale fields
+            selectAllStale();
+        }
+    }
+
     // ===================== Context Health Sidebar =====================
 
     public void refreshHealthPanel() {
         healthPanel.removeAll();
+        fieldCheckboxes.clear();
 
         Map<String, Freshness> report = orgContext.getFreshnessReport();
 
@@ -135,6 +205,16 @@ public class AgenticRoutinesPanel extends JPanel {
         sectionTitle.setFont(sectionTitle.getFont().deriveFont(Font.BOLD, 14f));
         sectionTitle.setAlignmentX(LEFT_ALIGNMENT);
         healthPanel.add(sectionTitle);
+        healthPanel.add(Box.createVerticalStrut(8));
+
+        // Summary line
+        long totalFields = report.size();
+        long freshCount = report.values().stream().filter(f -> f == Freshness.FRESH).count();
+        JLabel summaryLabel = new JLabel(freshCount + "/" + totalFields + " fields fresh");
+        summaryLabel.setFont(summaryLabel.getFont().deriveFont(Font.ITALIC, 11f));
+        summaryLabel.setForeground(new Color(130, 130, 140));
+        summaryLabel.setAlignmentX(LEFT_ALIGNMENT);
+        healthPanel.add(summaryLabel);
         healthPanel.add(Box.createVerticalStrut(12));
 
         // Render each freshness group
@@ -146,19 +226,10 @@ public class AgenticRoutinesPanel extends JPanel {
             addFreshnessGroup(freshness, fields);
         }
 
-        // Daily Update button at bottom
-        healthPanel.add(Box.createVerticalStrut(16));
-        healthPanel.add(new JSeparator());
-        healthPanel.add(Box.createVerticalStrut(8));
-
-        JButton dailyUpdateBtn = new JButton("Daily Update (All Stale)");
-        dailyUpdateBtn.setAlignmentX(LEFT_ALIGNMENT);
-        dailyUpdateBtn.setMaximumSize(new Dimension(240, 32));
-        dailyUpdateBtn.addActionListener(e -> onDailyUpdate(null));
-        healthPanel.add(dailyUpdateBtn);
-
+        healthPanel.add(Box.createVerticalGlue());
         healthPanel.revalidate();
         healthPanel.repaint();
+        updateRefreshSelectedButton();
     }
 
     private void addFreshnessGroup(Freshness freshness, List<String> fields) {
@@ -179,7 +250,7 @@ public class AgenticRoutinesPanel extends JPanel {
         JPanel groupHeader = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         groupHeader.setOpaque(false);
         groupHeader.setAlignmentX(LEFT_ALIGNMENT);
-        groupHeader.setMaximumSize(new Dimension(Integer.MAX_VALUE, 24));
+        groupHeader.setMaximumSize(new Dimension(Integer.MAX_VALUE, 22));
 
         JLabel dot = new JLabel("\u25CF"); // filled circle
         dot.setForeground(dotColor);
@@ -193,35 +264,57 @@ public class AgenticRoutinesPanel extends JPanel {
 
         healthPanel.add(groupHeader);
 
-        // Field list
+        // Field list with checkboxes
         for (String fieldName : fields) {
-            JPanel fieldRow = new JPanel(new BorderLayout(4, 0));
-            fieldRow.setOpaque(false);
-            fieldRow.setAlignmentX(LEFT_ALIGNMENT);
-            fieldRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 20));
-            fieldRow.setBorder(BorderFactory.createEmptyBorder(1, 20, 1, 4));
+            JCheckBox cb = new JCheckBox(OrganizationContext.getFieldLabel(fieldName));
+            cb.setFont(cb.getFont().deriveFont(11f));
+            cb.setOpaque(false);
+            cb.setAlignmentX(LEFT_ALIGNMENT);
+            cb.setMaximumSize(new Dimension(Integer.MAX_VALUE, 22));
+            cb.setBorder(BorderFactory.createEmptyBorder(1, 16, 1, 4));
+            cb.setForeground(new Color(80, 80, 90));
+            cb.addActionListener(e -> updateRefreshSelectedButton());
 
-            JLabel fieldLabel = new JLabel(OrganizationContext.getFieldLabel(fieldName));
-            fieldLabel.setFont(fieldLabel.getFont().deriveFont(11f));
-            fieldLabel.setForeground(new Color(100, 100, 110));
-            fieldRow.add(fieldLabel, BorderLayout.CENTER);
+            // Show last-updated tooltip
+            ContextEntry<String> entry = orgContext.getEntry(fieldName);
+            if (entry != null) {
+                String lastUpdated = entry.getLastUpdated();
+                String value = entry.getValue();
+                String preview = (value == null || value.isBlank()) ? "(empty)" : truncate(value, 60);
+                cb.setToolTipText("Last updated: " + lastUpdated + " | " + preview);
+            }
 
-            healthPanel.add(fieldRow);
+            fieldCheckboxes.put(fieldName, cb);
+            healthPanel.add(cb);
         }
 
-        // Refresh button for non-fresh groups
-        if (freshness != Freshness.FRESH) {
-            JButton refreshBtn = new JButton("Refresh \u25B6");
-            refreshBtn.setFont(refreshBtn.getFont().deriveFont(10f));
-            refreshBtn.setAlignmentX(LEFT_ALIGNMENT);
-            refreshBtn.setMaximumSize(new Dimension(240, 26));
-            refreshBtn.setBorder(BorderFactory.createEmptyBorder(2, 20, 2, 4));
-            final List<String> targetFields = new ArrayList<>(fields);
-            refreshBtn.addActionListener(e -> onDailyUpdate(targetFields));
-            healthPanel.add(refreshBtn);
-        }
+        healthPanel.add(Box.createVerticalStrut(6));
+    }
 
-        healthPanel.add(Box.createVerticalStrut(8));
+    private void updateRefreshSelectedButton() {
+        long selectedCount = fieldCheckboxes.values().stream().filter(JCheckBox::isSelected).count();
+        refreshSelectedBtn.setEnabled(selectedCount > 0);
+        refreshSelectedBtn.setText("Refresh Selected (" + selectedCount + ")");
+    }
+
+    private void selectAllStale() {
+        Map<String, Freshness> report = orgContext.getFreshnessReport();
+        for (var entry : fieldCheckboxes.entrySet()) {
+            Freshness f = report.get(entry.getKey());
+            boolean isStale = (f == Freshness.STALE || f == Freshness.NEEDS_CONFIRMATION);
+            entry.getValue().setSelected(isStale);
+        }
+        updateRefreshSelectedButton();
+    }
+
+    private List<String> getSelectedFields() {
+        List<String> selected = new ArrayList<>();
+        for (var entry : fieldCheckboxes.entrySet()) {
+            if (entry.getValue().isSelected()) {
+                selected.add(entry.getKey());
+            }
+        }
+        return selected;
     }
 
     // ===================== Main Area: Output + Approvals =====================
@@ -232,12 +325,13 @@ public class AgenticRoutinesPanel extends JPanel {
 
         JPanel emptyCard = createCard(
             "Get Started",
-            "Select stale fields to refresh, or click 'Daily Update' to review all context.\n\n" +
-            "The Daily Update function will:\n" +
-            "  1. Show you which fields are stale\n" +
-            "  2. Ask what has changed recently\n" +
-            "  3. Propose structured updates\n" +
-            "  4. Let you approve or reject each change",
+            "Select context fields using the checkboxes, then click 'Refresh Selected' " +
+            "to update them with AI assistance.\n\n" +
+            "Or click 'Daily Update (All)' to review and refresh all stale context at once.\n\n" +
+            "The update function will:\n" +
+            "  1. Ask what has changed recently\n" +
+            "  2. Propose structured updates for each field\n" +
+            "  3. Let you approve or reject each change",
             new Color(240, 240, 248),
             new Color(180, 180, 200)
         );
@@ -346,20 +440,39 @@ public class AgenticRoutinesPanel extends JPanel {
         return card;
     }
 
-    // ===================== Daily Update Flow =====================
+    // ===================== Update Flows =====================
+
+    /** Refreshes only the checkbox-selected fields. */
+    private void onRefreshSelected() {
+        List<String> selected = getSelectedFields();
+        if (selected.isEmpty()) return;
+        onDailyUpdate(selected);
+    }
 
     /**
      * Runs the Daily Context Update function.
      * @param targetFields specific fields to update, or null for all stale
      */
     public void onDailyUpdate(List<String> targetFields) {
+        // Build a description of what will be updated
+        String fieldDesc;
+        if (targetFields != null) {
+            List<String> labels = targetFields.stream()
+                .map(OrganizationContext::getFieldLabel)
+                .toList();
+            fieldDesc = "Fields to update: " + String.join(", ", labels);
+        } else {
+            fieldDesc = "All stale and aging fields will be reviewed.";
+        }
+
         // Ask user what changed
-        String userInput = JOptionPane.showInputDialog(
+        String userInput = (String) JOptionPane.showInputDialog(
             this,
-            "What has changed since your last update?\n" +
+            fieldDesc + "\n\nWhat has changed since your last update?\n" +
             "(Or press OK to just review current context.)",
             "Daily Context Update",
-            JOptionPane.QUESTION_MESSAGE
+            JOptionPane.QUESTION_MESSAGE,
+            null, null, ""
         );
 
         if (userInput == null) return; // cancelled
@@ -394,7 +507,7 @@ public class AgenticRoutinesPanel extends JPanel {
                     SwingUtilities.invokeLater(() -> {
                         if (result == null) {
                             showFunctionOutput("Daily Update Complete",
-                                "No updates needed — all context appears current.");
+                                "No updates needed \u2014 all context appears current.");
                             statusLabel.setText("No updates needed.");
                         } else {
                             int autoCount = result.autoApplied().size();
@@ -421,6 +534,10 @@ public class AgenticRoutinesPanel extends JPanel {
                             statusLabel.setText("Daily update complete. " +
                                 autoCount + " auto-applied, " + pendingCount + " pending approval.");
                         }
+
+                        // Clear checkboxes after run
+                        fieldCheckboxes.values().forEach(cb -> cb.setSelected(false));
+                        updateRefreshSelectedButton();
                     });
                 } catch (Exception e) {
                     SwingUtilities.invokeLater(() -> {
