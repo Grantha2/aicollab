@@ -301,6 +301,12 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         return panel;
     }
 
+    private boolean needsSetup(ProfileSet profile) {
+        return (profile.getTeamContext() == null || profile.getTeamContext().isBlank())
+            && (profile.getAgents() == null || profile.getAgents().isEmpty())
+            && (profile.getStakeholders() == null || profile.getStakeholders().isEmpty());
+    }
+
     private void initApplication() {
         try {
             config = new Config("config.properties");
@@ -308,6 +314,17 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             profileLibrary.ensureDefaultExists();
             List<String> names = profileLibrary.listAvailableSets();
             activeProfileSet = profileLibrary.loadSet(names.getFirst());
+
+            // First-launch check: if profile has no agents or stakeholders, run setup wizard
+            if (needsSetup(activeProfileSet)) {
+                FirstLaunchSetupDialog setupDialog = new FirstLaunchSetupDialog(this);
+                setupDialog.setVisible(true);
+                if (!setupDialog.wasCancelled()) {
+                    activeProfileSet = setupDialog.buildProfileSet();
+                    profileLibrary.saveSet(activeProfileSet, "default");
+                }
+            }
+
             refreshProfileCombo();
             rebuildStakeholderCombo();
             rebuildMaestro();
@@ -322,6 +339,7 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             InitiativeStore initiativeStore = new InitiativeStore();
             RelationshipStore relationshipStore = new RelationshipStore();
             OperationalFeedStore feedStore = new OperationalFeedStore();
+            WorkflowStore workflowStore = new WorkflowStore();
 
             // Build task registry with built-in tasks
             AgenticTaskRegistry taskRegistry = new AgenticTaskRegistry();
@@ -333,8 +351,16 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             taskRegistry.register(new WeeklyReportTask());
             taskRegistry.register(new StakeholderBriefingTask());
 
+            // Register user-defined workflows
+            for (WorkflowDefinition wd : workflowStore.getAll()) {
+                if (wd.isEnabled()) taskRegistry.register(new UserWorkflowTask(wd));
+            }
+
+            // Recommendation engine
+            RecommendationEngine recommendationEngine = new RecommendationEngine(orgCtx, feedStore, changeLog);
+
             agenticPanel = new AgenticRoutinesPanel(orgCtx, reconciliationService, changeLog,
-                    config, taskRegistry, feedStore);
+                    config, taskRegistry, feedStore, workflowStore, recommendationEngine);
 
             // Replace placeholder with real agentic panel
             viewContainer.remove(viewContainer.getComponentCount() - 1);

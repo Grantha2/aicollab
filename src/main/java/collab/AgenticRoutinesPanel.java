@@ -31,6 +31,8 @@ public class AgenticRoutinesPanel extends JPanel {
     private final Config config;
     private final AgenticTaskRegistry taskRegistry;
     private final OperationalFeedStore feedStore;
+    private final WorkflowStore workflowStore;
+    private final RecommendationEngine recommendationEngine;
 
     // UI components
     private final JPanel sidebarContent;    // left sidebar content (tasks + health + upcoming)
@@ -51,13 +53,17 @@ public class AgenticRoutinesPanel extends JPanel {
                                  ContextChangeLog changeLog,
                                  Config config,
                                  AgenticTaskRegistry taskRegistry,
-                                 OperationalFeedStore feedStore) {
+                                 OperationalFeedStore feedStore,
+                                 WorkflowStore workflowStore,
+                                 RecommendationEngine recommendationEngine) {
         this.orgContext = orgContext;
         this.reconciliation = reconciliation;
         this.changeLog = changeLog;
         this.config = config;
         this.feedStore = feedStore;
         this.taskRegistry = taskRegistry;
+        this.workflowStore = workflowStore;
+        this.recommendationEngine = recommendationEngine;
 
         setLayout(new BorderLayout());
         setBackground(new Color(245, 245, 250));
@@ -209,6 +215,23 @@ public class AgenticRoutinesPanel extends JPanel {
             }
         }
 
+        // "+ New Workflow" button
+        sidebarContent.add(Box.createVerticalStrut(4));
+        JButton newWorkflowBtn = new JButton("+ New Workflow");
+        newWorkflowBtn.setFont(newWorkflowBtn.getFont().deriveFont(10f));
+        newWorkflowBtn.setAlignmentX(LEFT_ALIGNMENT);
+        newWorkflowBtn.setMaximumSize(new Dimension(250, 24));
+        newWorkflowBtn.addActionListener(e -> onNewWorkflow());
+        sidebarContent.add(newWorkflowBtn);
+
+        // --- Separator ---
+        sidebarContent.add(Box.createVerticalStrut(12));
+        sidebarContent.add(new JSeparator());
+        sidebarContent.add(Box.createVerticalStrut(8));
+
+        // --- Recommendations Section ---
+        addRecommendationsSection();
+
         // --- Separator ---
         sidebarContent.add(Box.createVerticalStrut(12));
         sidebarContent.add(new JSeparator());
@@ -268,6 +291,65 @@ public class AgenticRoutinesPanel extends JPanel {
         sidebarContent.revalidate();
         sidebarContent.repaint();
         updateRefreshSelectedButton();
+    }
+
+    private void addRecommendationsSection() {
+        List<Recommendation> recs = recommendationEngine.getRecommendations();
+        if (recs.isEmpty()) return;
+
+        addSidebarSection("RECOMMENDED");
+
+        for (Recommendation rec : recs) {
+            JPanel recPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+            recPanel.setOpaque(false);
+            recPanel.setAlignmentX(LEFT_ALIGNMENT);
+            recPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 22));
+            recPanel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+
+            Color urgencyColor = switch (rec.urgency()) {
+                case "HIGH" -> new Color(244, 67, 54);
+                case "MEDIUM" -> new Color(255, 152, 0);
+                default -> new Color(100, 100, 110);
+            };
+
+            JLabel urgencyDot = new JLabel("\u25CF");
+            urgencyDot.setForeground(urgencyColor);
+            urgencyDot.setFont(urgencyDot.getFont().deriveFont(8f));
+            recPanel.add(urgencyDot);
+
+            JLabel recLabel = new JLabel(rec.title());
+            recLabel.setFont(recLabel.getFont().deriveFont(10f));
+            recLabel.setForeground(new Color(33, 100, 200));
+            recLabel.setToolTipText(rec.reason());
+            recPanel.add(recLabel);
+
+            recPanel.addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseClicked(java.awt.event.MouseEvent e) {
+                    AgenticTask task = taskRegistry.getById(rec.linkedTaskId());
+                    if (task != null) {
+                        AgenticTaskContext ctx = buildTaskContext();
+                        task.execute(ctx);
+                    }
+                }
+            });
+
+            sidebarContent.add(recPanel);
+        }
+    }
+
+    private void onNewWorkflow() {
+        Frame owner = (Frame) SwingUtilities.getWindowAncestor(this);
+        WorkflowEditorDialog dialog = new WorkflowEditorDialog(owner);
+        dialog.setVisible(true);
+        if (!dialog.wasCancelled()) {
+            WorkflowDefinition wd = dialog.getResult();
+            workflowStore.add(wd);
+            UserWorkflowTask task = new UserWorkflowTask(wd);
+            taskRegistry.register(task);
+            rebuildSidebar();
+            statusLabel.setText("Workflow '" + wd.getName() + "' created.");
+        }
     }
 
     private void addSidebarSection(String title) {
@@ -509,7 +591,6 @@ public class AgenticRoutinesPanel extends JPanel {
         JPanel card = new JPanel(new BorderLayout(8, 4));
         card.setBackground(Color.WHITE);
         card.setAlignmentX(LEFT_ALIGNMENT);
-        card.setMaximumSize(new Dimension(Integer.MAX_VALUE, 160));
         card.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(new Color(255, 193, 7), 1),
             BorderFactory.createEmptyBorder(8, 12, 8, 12)
@@ -523,8 +604,8 @@ public class AgenticRoutinesPanel extends JPanel {
         diffPanel.setOpaque(false);
 
         String currentDisplay = (change.currentValue() == null || change.currentValue().isBlank())
-            ? "(empty)" : truncate(change.currentValue(), 120);
-        String proposedDisplay = truncate(change.proposedValue(), 120);
+            ? "(empty)" : truncate(change.currentValue(), 300);
+        String proposedDisplay = truncate(change.proposedValue(), 300);
 
         JLabel currentLabel = new JLabel("<html><b>Current:</b> " + escapeHtml(currentDisplay) + "</html>");
         currentLabel.setFont(currentLabel.getFont().deriveFont(11f));
@@ -586,7 +667,6 @@ public class AgenticRoutinesPanel extends JPanel {
         JPanel card = new JPanel(new BorderLayout(8, 4));
         card.setBackground(bg);
         card.setAlignmentX(LEFT_ALIGNMENT);
-        card.setMaximumSize(new Dimension(Integer.MAX_VALUE, 300));
         card.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(border, 1),
             BorderFactory.createEmptyBorder(10, 14, 10, 14)
@@ -604,7 +684,14 @@ public class AgenticRoutinesPanel extends JPanel {
         textArea.setWrapStyleWord(true);
         textArea.setOpaque(false);
         textArea.setFont(textArea.getFont().deriveFont(12f));
-        card.add(textArea, BorderLayout.CENTER);
+
+        JScrollPane textScroll = new JScrollPane(textArea);
+        textScroll.setBorder(null);
+        textScroll.setOpaque(false);
+        textScroll.getViewport().setOpaque(false);
+        textScroll.setPreferredSize(new Dimension(0, 250));
+        textScroll.getVerticalScrollBar().setUnitIncrement(16);
+        card.add(textScroll, BorderLayout.CENTER);
 
         return card;
     }
