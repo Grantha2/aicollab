@@ -1,196 +1,401 @@
-# AI Collaboration Platform — Project Brief & Roadmap
+# AI Collaboration Platform — Product Roadmap v2
 
-## Updated Conversation Starter (paste this into the platform)
+## What This Application Is
 
-We are a team of four university students building a Java-based multi-model AI
-collaboration platform as our final project, due in 5 weeks. Here is where we
-stand and where we're headed.
+A decision-support tool that helps organizational leaders interact with AI faster and more effectively than visiting providers independently. Three capabilities make this possible:
 
-WHAT WE'VE BUILT (v0.3, working today):
-A single Main.java (~1,000 lines, zero external dependencies) that runs a
-complete 3-phase debate cycle using Java 21's built-in HttpClient. The user
-selects a stakeholder profile from a hotseat menu (CEO, CTO, CFO, or VP
-Product) — each with name, title, KPIs, decision authority, and background.
-Every API call carries a three-layer "layered" of context: (1) team context
-describing the advisory panel, (2) an agent identity giving each model a
-distinct role — Claude as Strategy & Risk Analyst, GPT as Innovation &
-Opportunity Analyst, Gemini as Technical Feasibility Lead — and (3) the active
-stakeholder's full profile so the panel knows who they're advising. Phase 1
-sends the stakeholder's prompt independently to all three models. Phase 2
-passes each model the other two responses and asks it to react from its
-assigned perspective — challenging, refining, or agreeing. Phase 3 sends all
-six outputs to Claude as maestro, which synthesizes a structured report
-covering areas of agreement, disagreement, key insights, and a
-stakeholder-specific recommendation. Cost safeguards include a confirmation
-step before every cycle, a post-cycle pause with running API call counts, and
-a session tracker. The user can switch stakeholder profiles between cycles
-without restarting. Provider integrations are thin wrappers: callClaude,
-callOpenAi, callGemini each build provider-specific JSON and headers, with
-escapeForJson for input sanitization and extractField for lightweight
-string-based response parsing.
-
-WHAT WE'RE BUILDING NEXT (see roadmap below):
-Collaborative multi-user prompting where multiple stakeholders contribute to
-the same session. Rich organizational context (company mission, industry,
-constraints) prepended to every call. Conversation persistence so the panel
-retains context across cycles. A simple GUI so users can visualize each phase
-of the debate. Eventually, a proprietary orchestration model to replace
-Claude as synthesizer.
-
-Given this context — what we've built, what we're building, and our 5-week
-deadline — what are the most critical next steps, technical risks, and
-feature priorities we should focus on to deliver a strong, defensible final
-project?
-
-
-## Current Solution Summary
-
-The platform is a CLI loop in one Java file. It reads a user prompt, blocks
-empty input, supports `quit` and `switch` commands, and requires explicit
-`y/n` confirmation before running a paid cycle (7 API calls per debate). Each
-cycle runs three phases: independent responses, cross-reactions where each
-model reviews the other two from its assigned agent perspective, and a final
-synthesis where Claude merges all six prior outputs into a stakeholder-tailored
-report. The design is entirely prompt-driven — orchestration happens by passing
-progressively richer text prompts between model calls, not through any special
-debate API. Provider integrations are thin HTTP wrappers with manual JSON
-construction and string-based response extraction. Main tradeoff: simple and
-teachable, but brittle for production (hardcoded config, manual JSON parsing,
-no persistence).
-
-
-## 5-Week Roadmap
-
-### WEEK 1 — Foundation Hardening (current week)
-Owner: Full team together
-
-GOALS:
-- All four team members can run Main.java locally with live API keys
-- Everyone understands the 3-phase flow by reading the comments
-- Git repo is live with branch protection and a .gitignore for keys
-
-TASKS:
-- [ ] Create GitHub repo, push Main.java (keys in .gitignore)
-- [ ] Create a config.properties file for API keys (read at startup)
-  - Replaces hardcoded keys — first real refactor the team does together
-  - Teaches file I/O and Properties class
-- [ ] Each team member runs a full debate cycle and reads every comment
-- [ ] Break things on purpose: remove a header, swap a model name, corrupt
-      the JSON — learn what each piece does by watching it fail
-- [ ] Team code review: walk through Main.java together line by line
-
-DELIVERABLE: Working platform on all 4 machines, keys externalized, everyone
-can explain the HTTP request → JSON → response flow.
+1. **Shared Cloud Context** — team-wide organizational memory that keeps AI grounded in reality
+2. **Task Templates with Forms** — one-click prompting with structured intake, replacing manual typing
+3. **Agentic Workflows at Scale** — deploy, visualize, and manage AI-powered automations from a single pane
 
 ---
 
-### WEEK 2 — Organization Context & Conversation Memory
-Owner: Person A (org context) + Person D (conversation memory)
+## Current State (What Exists Today)
 
-GOALS:
-- Organization-level context (mission, industry, constraints) prepended to
-  every API call alongside stakeholder profiles
-- Conversation history persists across debate cycles within a session
+### Working
+- 3-phase debate cycle (independent → reaction → synthesis) across Claude, GPT, Gemini
+- Swing GUI with Executive Suite (button board), Debate view, Agentic Routines view
+- Profile system: agent identities, stakeholder profiles, team context (persisted locally as JSON)
+- Organization context with freshness tracking, per-field TTLs, ContextEntry metadata
+- Reconciliation service for safe AI-proposed context updates (auto-apply vs approval queue)
+- Task template buttons with follow-up question forms, style instructions, simple/debate toggle
+- 7 built-in agentic tasks (Start Your Day, Outbound Messages, Context Refresh, Meeting Prep, Initiative Review, Weekly Report, Stakeholder Briefing)
+- User-defined workflows via WorkflowEditorDialog (prompt template, context layer selection, output format)
+- Recommendation engine surfacing next-best-actions based on freshness, feeds, and change log
+- Session persistence via append-only JSONL
+- Operational feed store (events, meetings, deadlines, tasks)
+- Relationship and initiative structured data stores
+- Context change log (audit trail)
 
-TASKS:
-- [ ] Person A: Add Organization fields (name, industry, mission, size,
-      constraints) as constants or loaded from a file. Wire into
-      formatStakeholderBriefing() so every call includes org context.
-- [ ] Person D: Create a ConversationContext class (ArrayList of prompt/
-      response pairs tagged by author and phase). Pass prior context into
-      Phase 1 prompts so the panel has memory of earlier cycles.
-- [ ] Both: Write the toBriefing() methods that convert these objects into
-      plain-English blocks for the prompt
-- [ ] Team integration: merge both into Main.java, test end-to-end
-
-DELIVERABLE: Multi-cycle sessions where the second debate references the
-first. Org context visible in every model's response.
-
----
-
-### WEEK 3 — Multi-Stakeholder Prompting & Structured Output
-Owner: Person B (multi-prompt) + Person C (structured output)
-
-GOALS:
-- Multiple stakeholders can contribute prompts to the same debate cycle
-  (tagged by who said what)
-- Models output structured reactions (agree/disagree/refine with specific
-  references) instead of free-form text
-
-TASKS:
-- [ ] Person B: Modify the prompt loop so multiple stakeholders can add
-      input before triggering the cycle. Each message is tagged with the
-      stakeholder's name and role. The combined prompt stream goes to Phase 1.
-- [ ] Person C: Update buildReactionPrompt() to instruct models to output
-      structured reactions: stance (agree/disagree/refine), target model,
-      specific point being addressed, and rationale. Update extractField()
-      or add JSON parsing to handle structured output.
-- [ ] Team: Test with 2-3 stakeholders prompting the same cycle
-- [ ] Team: Evaluate whether structured reactions improve synthesis quality
-
-DELIVERABLE: A debate cycle initiated by multiple stakeholders, with models
-producing structured cross-reactions that the synthesizer can reference
-precisely.
+### Not Yet Built
+- Cloud sync for organization context (currently local JSON only)
+- Multi-user access / shared context across team members
+- Cloud-based agent that detects cross-user misalignment
+- Visual workflow builder / orchestration canvas
+- Agent deployment management (create, monitor, schedule agents)
+- Provider-agnostic agent execution (currently Claude-only for agentic tasks)
+- Web-based UI (currently Java Swing desktop only)
 
 ---
 
-### WEEK 4 — Simple GUI & Session Persistence
-Owner: Person A (GUI) + Person B (file persistence)
+## Pillar 1: Shared Cloud Context
 
-GOALS:
-- A basic Swing GUI showing the prompt input, three model panes, and the
-  synthesis report — so the user can visualize the debate
-- Sessions saved to disk so they can be reviewed later
+**Goal:** Every team member works from the same organizational truth. Context updates propagate instantly. Staleness is detected and resolved automatically.
 
-TASKS:
-- [ ] Person A: Build a Java Swing window with:
-      - Top: stakeholder selector dropdown + prompt text field
-      - Middle: three side-by-side panels (Claude / GPT / Gemini)
-      - Bottom: synthesis report panel
-      - Wire the existing methods as button callbacks
-- [ ] Person B: Save each completed cycle to a JSON or text file
-      (timestamp, stakeholder, prompt, all 6 responses, synthesis).
-      Add a "load previous session" option.
-- [ ] Person C + D: Continue refining prompt engineering — test different
-      agent profiles, reaction instructions, and synthesis formats
-- [ ] Team: Integration testing with GUI + persistence + multi-stakeholder
+### 1A. Cloud Context Backend (Current Priority)
 
-DELIVERABLE: A visual interface that shows the full debate flow. Saved
-sessions that can be reopened and reviewed.
+**What:** Replace `LocalContextSource` with `AwsContextSource` behind the existing `ContextSource` interface.
+
+**Architecture:**
+- API Gateway + Lambda + DynamoDB (or equivalent)
+- `ContextSource.get()` → GET from cloud, cache locally
+- `ContextSource.save()` → POST to cloud, invalidate cache
+- Offline fallback: if cloud unreachable, use local cache, queue writes for sync
+
+**Files to change:**
+- Create `AwsContextSource.java` implementing `ContextSource`
+- `ContextController.setContextSource()` — swap at startup based on config
+- `Config.java` — add `context.source=local|cloud` and cloud endpoint URL
+- `OrganizationContext` — no changes needed (already behind interface)
+
+**Migration path:**
+1. Ship `AwsContextSource` with a feature flag (`context.source=local` default)
+2. Test with one user writing, another reading
+3. Flip to `cloud` when stable
+
+### 1B. Multi-User Context Sync
+
+**What:** Multiple users read/write the same org context. Changes from User A appear for User B within seconds.
+
+**Design decisions:**
+- Last-write-wins at the field level (not document level) to minimize conflicts
+- Each write includes `userId`, `timestamp`, `source` for audit
+- Change log becomes shared (cloud-backed ContextChangeLog)
+- Freshness checks respect the most recent writer, not just "my last edit"
+
+### 1C. Cross-User Alignment Agent (Stub)
+
+**What:** A long-running cloud agent that monitors context contributions from multiple users and detects when stakeholders are misaligned.
+
+**How it works:**
+- Each user's context updates flow into a shared stream (DynamoDB Stream or similar)
+- Periodically (or on significant change), the agent:
+  1. Pulls recent updates grouped by user
+  2. Sends them to Claude with a prompt asking: "Do these users agree on priorities, initiatives, and risks? Where are they misaligned?"
+  3. If misalignment detected → creates a `Recommendation` with urgency HIGH, linked to a "Resolve Misalignment" task
+  4. The recommendation surfaces in every user's Agentic Routines sidebar
+
+**Stub prompt for the alignment-detection agent:**
+
+```
+You are an organizational alignment monitor. You receive context updates from
+multiple users within the same organization.
+
+Your job:
+1. Compare each user's stated priorities, initiative status assessments,
+   risk evaluations, and pending decisions
+2. Identify CONFLICTS — where User A says X is on-track but User B says
+   it's blocked, or where priorities don't match
+3. Identify GAPS — important context one user has that others are missing
+4. Rate each misalignment: CRITICAL (blocks decisions), IMPORTANT (creates
+   confusion), or MINOR (cosmetic/timing difference)
+
+For each misalignment found, output:
+- FIELD: which context field is misaligned
+- USERS: who disagrees
+- SUMMARY: what each user believes
+- IMPACT: what goes wrong if this isn't resolved
+- SUGGESTED RESOLUTION: who should talk to whom, and what question to answer
+
+If all users are aligned, say so and note the confidence level.
+
+=== USER UPDATES ===
+{per_user_context_snapshots}
+```
+
+**Scope:** This agent is out of scope for the current PR. The stub prompt and architecture description above are sufficient for a developer to implement it once the cloud context backend (1A) ships.
 
 ---
 
-### WEEK 5 — Polish, Testing & Final Presentation
-Owner: Full team
+## Pillar 2: Task Templates & Structured Prompting
 
-GOALS:
-- Clean, commented code that any team member can explain
-- Robust error handling for API failures
-- Final presentation prepared
+**Goal:** Users select what they want to do from a menu of buttons. Forms capture intent. The system assembles the prompt — users never write raw prompts for routine tasks.
 
-TASKS:
-- [ ] Add graceful degradation: if one model fails, continue with two
-- [ ] Add retry logic with backoff for rate limits (429 errors)
-- [ ] Code review: remove dead code, ensure consistent commenting style
-- [ ] Write README.md: setup instructions, architecture overview,
-      how to add new models
-- [ ] Prepare demo script: show a 3-stakeholder debate with the GUI,
-      highlight how different stakeholders get different recommendations
-- [ ] Practice the presentation — each person explains their component
+### Current State (Already Built)
+- `SuiteButton` with `TASK_TEMPLATE` action type
+- `TaskQuestionDialog` collects follow-up answers
+- `TaskContext.buildTaskBlock()` assembles task + style + answers into prompt
+- `ButtonCreationAssistantDialog` — AI-assisted button creation
+- 60+ default task buttons across 12 categories (Leadership, Meetings, Finance, etc.)
+- Simple mode (single API call) vs debate mode (full 3-phase cycle)
+- Organization context auto-prepended when enabled
 
-DELIVERABLE: Final submission. Working platform, clean code, documentation,
-and a demo that shows the full vision.
+### What to Improve
 
+**2A. Smarter Form Routing:**
+- After a user answers follow-up questions, analyze answers to determine if simple or debate mode is better (currently hardcoded per button)
+- Add conditional questions: if answer to Q1 is "budget request", show Q2 about amount; otherwise skip
 
-## Future Vision (post-submission)
+**2B. Output History per Button:**
+- Track which buttons a user runs most frequently
+- Show "last run" timestamp and a link to the previous output
+- Enable "re-run with same answers" for recurring tasks
 
-These are stretch goals discussed in our design sessions. Not in scope for
-the 5-week deadline, but they define where the platform is headed:
+**2C. Template Sharing:**
+- Export/import button definitions as JSON
+- When cloud context ships: shared button library across the organization
 
-- Proprietary orchestration model to replace Claude as synthesizer
-- Web-based interface (replacing Swing) for real multi-user access
-- Async stakeholder input (submit perspectives at different times)
-- Dynamic debate rounds (maestro decides if more rounds are needed)
-- Model-agnostic plugin system (add new LLMs without code changes)
-- Bias detection layer in the synthesis phase
-- Cost dashboard tracking token usage per model per session
+---
+
+## Pillar 3: Agentic Workflows at Scale (Primary Focus)
+
+**Goal:** Make it trivially easy to deploy, visualize, monitor, and manage AI agents — starting with Claude's native agent capabilities, expanding to multi-provider orchestration.
+
+This is the platform's highest value-add. Everything below is ordered by implementation priority.
+
+### 3A. Workflow Visualization Canvas
+
+**What:** A visual view where users see their workflows as connected nodes, not just a list of tasks in a sidebar.
+
+**Why:** The current Agentic Routines view is a flat sidebar of task buttons + context health checkboxes. Users can't see how workflows connect, what triggers what, or where data flows. A canvas makes the system legible.
+
+**Design:**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Workflow Canvas                              [+ New]    │
+│                                                         │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐          │
+│  │ Trigger  │───▶│ Context  │───▶│ Generate │          │
+│  │ Daily 9am│    │ Refresh  │    │ Brief    │          │
+│  └──────────┘    └──────────┘    └──────────┘          │
+│                       │                │                │
+│                       ▼                ▼                │
+│                  ┌──────────┐    ┌──────────┐          │
+│                  │ Approval │    │ Distribute│          │
+│                  │ Queue    │    │ via Email │          │
+│                  └──────────┘    └──────────┘          │
+│                                                         │
+│  Status: Last run 2026-04-11 09:00 • 3/4 steps OK      │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Implementation approach:**
+- New `WorkflowCanvasPanel.java` — a custom Swing `JPanel` with painted nodes and edges
+- Each node = one `AgenticTask` or `WorkflowDefinition` step
+- Edges = data flow (output of step N feeds input of step N+1)
+- Click a node → show its config, last output, run history
+- Right-click → edit, disable, delete, duplicate
+- Drag from one node's output port to another's input port to connect
+
+**Data model addition:**
+```java
+public class WorkflowStep {
+    String id;
+    String taskId;           // references AgenticTask or WorkflowDefinition
+    String label;
+    int x, y;                // canvas position
+    List<String> inputFrom;  // step IDs that feed into this step
+    Map<String, String> paramOverrides; // override default task params
+}
+```
+
+Add `List<WorkflowStep> steps` to `WorkflowDefinition` (currently it's a single-prompt template — this extends it to multi-step).
+
+### 3B. Claude Agent Deployment via Tool Use
+
+**What:** Integrate Claude's native tool-use / agentic capabilities so workflows can execute multi-step reasoning with tools, not just single prompt→response calls.
+
+**Why:** Current agentic tasks are single-shot: build prompt → call Claude → display output. Real agentic value comes from Claude using tools in a loop: search context → identify gap → propose update → get approval → write back → confirm.
+
+**Architecture:**
+
+```java
+// New: AgentExecutor.java — runs a Claude agent with tools
+public class AgentExecutor {
+    private final LlmClient client;
+    private final List<ToolDefinition> tools;
+    private final int maxIterations;
+
+    public AgentResult execute(String systemPrompt, String userMessage) {
+        // Agentic loop:
+        // 1. Send messages + tool definitions to Claude
+        // 2. If Claude returns tool_use → execute the tool locally
+        // 3. Feed tool_result back to Claude
+        // 4. Repeat until Claude returns final text or maxIterations hit
+    }
+}
+```
+
+**Tool definitions to build first:**
+- `read_context(field_name)` → returns current org context field value + freshness
+- `update_context(field_name, value, reason)` → proposes change via ReconciliationService
+- `search_feed(query, days)` → searches operational feed items
+- `search_relationships(query)` → searches relationship store
+- `search_initiatives(query)` → searches initiative store
+- `create_feed_item(title, type, date, ...)` → adds to operational feed
+- `send_notification(recipient, message)` → stub for future email/Slack integration
+
+**Anthropic API integration:**
+- Use the `tools` parameter in the messages API request body
+- Parse `tool_use` content blocks from Claude's response
+- Execute tool locally, return `tool_result` in the next request
+- `AnthropicClient.sendMessage(LlmRequest)` needs to support tool definitions and the agentic loop
+
+**Migration:** Existing single-shot tasks (`ContextRefreshTask`, `StartYourDayTask`, etc.) continue working unchanged. New agentic tasks opt into `AgentExecutor` by providing tool definitions.
+
+### 3C. Workflow Execution Engine
+
+**What:** Execute multi-step workflows where each step's output feeds the next step's input, with error handling, retries, and human-in-the-loop approval gates.
+
+**Current gap:** `UserWorkflowTask` runs a single prompt. There's no concept of "step 1 output becomes step 2 input."
+
+**Design:**
+
+```java
+public class WorkflowEngine {
+    public WorkflowRun execute(WorkflowDefinition workflow, AgenticTaskContext ctx) {
+        WorkflowRun run = new WorkflowRun(workflow.getId());
+
+        for (WorkflowStep step : workflow.getSteps()) {
+            StepResult result = executeStep(step, run, ctx);
+
+            if (result.requiresApproval()) {
+                run.pauseAt(step.getId());
+                return run; // UI shows approval prompt, resumes on user action
+            }
+
+            if (result.failed()) {
+                run.fail(step.getId(), result.error());
+                return run;
+            }
+
+            run.complete(step.getId(), result.output());
+        }
+
+        run.markComplete();
+        return run;
+    }
+}
+```
+
+**Key concepts:**
+- `WorkflowRun` — tracks execution state of a running workflow (step statuses, outputs, timing)
+- Approval gates — any step can pause execution and wait for human confirmation
+- Error recovery — failed steps can be retried or skipped
+- Output passing — each step's output is available to subsequent steps via `{step:step_id}` placeholders
+
+### 3D. Agent Monitoring Dashboard
+
+**What:** A view showing all active/scheduled agents, their last run status, execution history, and resource usage.
+
+**Why:** As users deploy more workflows, they need visibility into what's running, what failed, and what's scheduled.
+
+**Components:**
+- Agent list with status indicators (running, idle, failed, scheduled)
+- Execution log: timestamp, duration, tokens used, outcome
+- Alert for failed or stuck agents
+- Cost tracking: estimated API cost per workflow per day/week
+
+**Data model:**
+```java
+public class AgentRunLog {
+    String workflowId;
+    String runId;
+    Instant startTime;
+    Instant endTime;
+    String status;          // "running", "completed", "failed", "paused"
+    int totalTokensUsed;
+    int apiCallsMade;
+    List<StepLog> steps;
+    String errorMessage;    // null if successful
+}
+```
+
+### 3E. Multi-Provider Agent Execution
+
+**What:** Workflows can route steps to different AI providers based on the task (Claude for reasoning, GPT for creative, Gemini for data analysis).
+
+**Current state:** All agentic tasks hardcode `AnthropicClient`. The `LlmClient` interface already supports any provider.
+
+**Changes:**
+- `WorkflowStep` gets a `provider` field: `"claude"`, `"gpt"`, `"gemini"`, or `"auto"`
+- `"auto"` routes based on step type: analysis → Claude, creative → GPT, execution → Gemini (matches existing agent profiles)
+- `AgentExecutor` accepts an `LlmClient` parameter, not hardcoded provider
+- Tool-use agentic loops initially Claude-only (other providers' tool-use APIs added incrementally)
+
+### 3F. Guided Workflow Suggestions
+
+**What:** When a user creates a new workflow, the system suggests similar existing workflows and recommends complementary automations.
+
+**Example:** User creates "Weekly Board Report" workflow. System suggests:
+- "You might also want a 'Pre-Board-Meeting Prep' workflow that runs 2 days before"
+- "Consider adding an 'Initiative Review' step before the report generation"
+- "Similar workflow 'Weekly Team Report' exists — would you like to fork it?"
+
+**Implementation:** Use the existing `RecommendationEngine` pattern. When a workflow is created or edited, analyze its prompt template and context layers against the existing workflow library.
+
+---
+
+## Implementation Sequence
+
+### Phase 1: Cloud Foundation (Weeks 1–2)
+1. `AwsContextSource.java` — cloud read/write behind existing interface
+2. Config flag to toggle local vs cloud
+3. Test with 2 users on same org context
+4. Cloud-backed `ContextChangeLog`
+
+### Phase 2: Agent Execution Layer (Weeks 2–3)
+1. `AgentExecutor.java` — agentic loop with tool use
+2. Core tool definitions (read_context, update_context, search_feed)
+3. Upgrade `ContextRefreshTask` to use `AgentExecutor` (proof of concept)
+4. `WorkflowStep` data model extension
+5. `WorkflowEngine.java` — multi-step execution with output passing
+
+### Phase 3: Visualization (Weeks 3–4)
+1. `WorkflowCanvasPanel.java` — visual node-and-edge workflow display
+2. Node rendering, edge painting, click/drag interaction
+3. Wire canvas to `WorkflowDefinition.steps`
+4. Execution status overlay (green/yellow/red per node)
+
+### Phase 4: Monitoring & Multi-Provider (Weeks 4–5)
+1. `AgentRunLog` and execution history persistence
+2. Agent monitoring dashboard panel
+3. Cost estimation per workflow
+4. Multi-provider routing in `WorkflowStep`
+5. Guided workflow suggestions
+
+### Phase 5: Alignment Agent (Post-Cloud Stability)
+1. Cloud event stream for context changes
+2. Periodic alignment analysis via Claude
+3. Misalignment recommendations surfaced per-user
+4. Resolution workflow (flag → discuss → update → confirm)
+
+---
+
+## File Inventory (New Files Needed)
+
+| File | Pillar | Purpose |
+|---|---|---|
+| `AwsContextSource.java` | 1 | Cloud context backend |
+| `AgentExecutor.java` | 3 | Agentic loop with tool use |
+| `ToolDefinition.java` | 3 | Tool schema for Claude tool use |
+| `ToolRegistry.java` | 3 | Registry of available tools |
+| `ContextTools.java` | 3 | Built-in tools (read/write context, search feeds) |
+| `WorkflowStep.java` | 3 | Single step in a multi-step workflow |
+| `WorkflowEngine.java` | 3 | Multi-step workflow execution |
+| `WorkflowRun.java` | 3 | Execution state of a running workflow |
+| `WorkflowCanvasPanel.java` | 3 | Visual workflow editor/viewer |
+| `AgentRunLog.java` | 3 | Execution history record |
+| `AgentMonitorPanel.java` | 3 | Dashboard for agent status/history |
+| `AlignmentAgent.java` | 1 | Cross-user misalignment detection (stub) |
+
+---
+
+## Design Principles (Unchanged)
+
+1. **Simple. Teachable. Commented.** — every new class follows one-concept-per-file
+2. **No framework magic** — plain Java, Gson for JSON, constructor injection
+3. **Interface-first** — `ContextSource`, `LlmClient`, `AgenticTask` are the extension points
+4. **Context Layering Architecture** — team context + agent identity + stakeholder + org context + task context + history
+5. **Category = Color = Grouping** — one concept drives all three in the button board
