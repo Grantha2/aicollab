@@ -48,8 +48,6 @@ public class OrganizationContext {
         Map.entry("activeInitiativesAndStatus",  TTL_OPERATIONAL),
         Map.entry("upcomingDeadlinesAndEvents",  TTL_URGENT),
         Map.entry("currentMetrics",              TTL_OPERATIONAL),
-        Map.entry("officerRosterAndOwnership",   TTL_STABLE),
-        Map.entry("keyPartnersStakeholders",     TTL_STRATEGIC),
         Map.entry("currentBlockersRisks",        TTL_URGENT),
         Map.entry("pendingDecisions",            TTL_URGENT),
         Map.entry("preferredToneStyle",          TTL_STABLE)
@@ -64,14 +62,19 @@ public class OrganizationContext {
         Map.entry("activeInitiativesAndStatus",  "Active Initiatives and Status"),
         Map.entry("upcomingDeadlinesAndEvents",  "Upcoming Deadlines and Events"),
         Map.entry("currentMetrics",              "Current Metrics"),
-        Map.entry("officerRosterAndOwnership",   "Officer Roster and Ownership"),
-        Map.entry("keyPartnersStakeholders",     "Key Partners / Stakeholders"),
         Map.entry("currentBlockersRisks",        "Current Blockers / Risks"),
         Map.entry("pendingDecisions",            "Pending Decisions"),
         Map.entry("preferredToneStyle",          "Preferred Tone / Style")
     );
 
-    // --- Organization Context Fields (now metadata-wrapped) ---
+    // --- Organization Context Fields (metadata-wrapped) ---
+    //
+    // NOTE: roster and stakeholder data are intentionally NOT stored here.
+    // Agent panel and stakeholders are owned by ProfileSet (structured), and
+    // the human org roster is owned by the memberProfiles list below. Two
+    // earlier freeform fields ("officerRosterAndOwnership" and
+    // "keyPartnersStakeholders") were dropped to eliminate duplication —
+    // see the migration in deserialize() / migrateFromOldFormat().
     private ContextEntry<String> lastUpdated                = new ContextEntry<>("");
     private ContextEntry<String> whatChangedSinceLastUpdate  = new ContextEntry<>("");
     private ContextEntry<String> currentTermDateRange        = new ContextEntry<>("");
@@ -79,8 +82,6 @@ public class OrganizationContext {
     private ContextEntry<String> activeInitiativesAndStatus  = new ContextEntry<>("");
     private ContextEntry<String> upcomingDeadlinesAndEvents  = new ContextEntry<>("");
     private ContextEntry<String> currentMetrics              = new ContextEntry<>("");
-    private ContextEntry<String> officerRosterAndOwnership   = new ContextEntry<>("");
-    private ContextEntry<String> keyPartnersStakeholders     = new ContextEntry<>("");
     private ContextEntry<String> currentBlockersRisks        = new ContextEntry<>("");
     private ContextEntry<String> pendingDecisions            = new ContextEntry<>("");
     private ContextEntry<String> preferredToneStyle          = new ContextEntry<>("");
@@ -109,8 +110,6 @@ public class OrganizationContext {
     public String getActiveInitiativesAndStatus()   { return val(activeInitiativesAndStatus); }
     public String getUpcomingDeadlinesAndEvents()   { return val(upcomingDeadlinesAndEvents); }
     public String getCurrentMetrics()               { return val(currentMetrics); }
-    public String getOfficerRosterAndOwnership()    { return val(officerRosterAndOwnership); }
-    public String getKeyPartnersStakeholders()      { return val(keyPartnersStakeholders); }
     public String getCurrentBlockersRisks()         { return val(currentBlockersRisks); }
     public String getPendingDecisions()             { return val(pendingDecisions); }
     public String getPreferredToneStyle()           { return val(preferredToneStyle); }
@@ -135,8 +134,6 @@ public class OrganizationContext {
     public void setActiveInitiativesAndStatus(String v)   { setField(activeInitiativesAndStatus, v, "user_edit"); }
     public void setUpcomingDeadlinesAndEvents(String v)   { setField(upcomingDeadlinesAndEvents, v, "user_edit"); }
     public void setCurrentMetrics(String v)               { setField(currentMetrics, v, "user_edit"); }
-    public void setOfficerRosterAndOwnership(String v)    { setField(officerRosterAndOwnership, v, "user_edit"); }
-    public void setKeyPartnersStakeholders(String v)      { setField(keyPartnersStakeholders, v, "user_edit"); }
     public void setCurrentBlockersRisks(String v)         { setField(currentBlockersRisks, v, "user_edit"); }
     public void setPendingDecisions(String v)             { setField(pendingDecisions, v, "user_edit"); }
     public void setPreferredToneStyle(String v)           { setField(preferredToneStyle, v, "user_edit"); }
@@ -164,8 +161,6 @@ public class OrganizationContext {
             case "activeInitiativesAndStatus" -> activeInitiativesAndStatus;
             case "upcomingDeadlinesAndEvents" -> upcomingDeadlinesAndEvents;
             case "currentMetrics"            -> currentMetrics;
-            case "officerRosterAndOwnership"  -> officerRosterAndOwnership;
-            case "keyPartnersStakeholders"   -> keyPartnersStakeholders;
             case "currentBlockersRisks"      -> currentBlockersRisks;
             case "pendingDecisions"          -> pendingDecisions;
             case "preferredToneStyle"        -> preferredToneStyle;
@@ -173,13 +168,12 @@ public class OrganizationContext {
         };
     }
 
-    /** Returns all context field names (the 12 metadata-wrapped fields). */
+    /** Returns all context field names (the 10 metadata-wrapped fields). */
     public static List<String> getFieldNames() {
         return List.of(
             "lastUpdated", "whatChangedSinceLastUpdate", "currentTermDateRange",
             "topPriorities", "activeInitiativesAndStatus", "upcomingDeadlinesAndEvents",
-            "currentMetrics", "officerRosterAndOwnership", "keyPartnersStakeholders",
-            "currentBlockersRisks", "pendingDecisions", "preferredToneStyle"
+            "currentMetrics", "currentBlockersRisks", "pendingDecisions", "preferredToneStyle"
         );
     }
 
@@ -245,8 +239,6 @@ public class OrganizationContext {
         appendField(sb, "Active Initiatives and Status", getActiveInitiativesAndStatus());
         appendField(sb, "Upcoming Deadlines and Events", getUpcomingDeadlinesAndEvents());
         appendField(sb, "Current Metrics", getCurrentMetrics());
-        appendField(sb, "Officer Roster and Ownership", getOfficerRosterAndOwnership());
-        appendField(sb, "Key Partners / Stakeholders", getKeyPartnersStakeholders());
         appendField(sb, "Current Blockers / Risks", getCurrentBlockersRisks());
         appendField(sb, "Pending Decisions", getPendingDecisions());
         appendField(sb, "Preferred Tone / Style", getPreferredToneStyle());
@@ -328,10 +320,40 @@ public class OrganizationContext {
         if (isOldFormat) {
             return migrateFromOldFormat(root);
         } else {
+            // Also warn when loading new-format JSON that still has the
+            // dropped fields lingering (e.g., from before this cleanup).
+            warnIfDropped(root, "officerRosterAndOwnership");
+            warnIfDropped(root, "keyPartnersStakeholders");
             OrganizationContext ctx = GSON.fromJson(root, OrganizationContext.class);
             if (ctx == null) ctx = new OrganizationContext();
             ctx.ensureNonNull();
             return ctx;
+        }
+    }
+
+    /**
+     * Logs a one-line warning if the loaded JSON still has one of the two
+     * dropped fields. Used during the migration off of
+     * OrganizationContext.officerRosterAndOwnership and .keyPartnersStakeholders —
+     * roster data now lives in {@link #memberProfiles} and stakeholders in
+     * {@link ProfileSet#getStakeholders()}.
+     */
+    private static void warnIfDropped(JsonObject root, String fieldName) {
+        if (!root.has(fieldName)) return;
+        JsonElement el = root.get(fieldName);
+        String value = null;
+        if (el.isJsonPrimitive()) {
+            value = el.getAsString();
+        } else if (el.isJsonObject() && el.getAsJsonObject().has("value")) {
+            JsonElement inner = el.getAsJsonObject().get("value");
+            if (inner != null && inner.isJsonPrimitive()) {
+                value = inner.getAsString();
+            }
+        }
+        if (value != null && !value.isBlank()) {
+            System.out.println("[OrganizationContext migration] Dropping '" + fieldName
+                    + "' field (has value, will be lost). Move this data into "
+                    + "ProfileSet (stakeholders) or memberProfiles (roster) instead.");
         }
     }
 
@@ -345,11 +367,16 @@ public class OrganizationContext {
         ctx.activeInitiativesAndStatus  = migrateField(root, "activeInitiativesAndStatus");
         ctx.upcomingDeadlinesAndEvents  = migrateField(root, "upcomingDeadlinesAndEvents");
         ctx.currentMetrics              = migrateField(root, "currentMetrics");
-        ctx.officerRosterAndOwnership   = migrateField(root, "officerRosterAndOwnership");
-        ctx.keyPartnersStakeholders     = migrateField(root, "keyPartnersStakeholders");
         ctx.currentBlockersRisks        = migrateField(root, "currentBlockersRisks");
         ctx.pendingDecisions            = migrateField(root, "pendingDecisions");
         ctx.preferredToneStyle          = migrateField(root, "preferredToneStyle");
+
+        // Dropped fields: officerRosterAndOwnership + keyPartnersStakeholders.
+        // These overlapped with ProfileSet.stakeholders and
+        // OrganizationContext.memberProfiles respectively. Warn if the old
+        // JSON still has non-empty values so the user notices the data move.
+        warnIfDropped(root, "officerRosterAndOwnership");
+        warnIfDropped(root, "keyPartnersStakeholders");
 
         // Migrate plain string fields
         ctx.defaultAudience              = getString(root, "defaultAudience");
@@ -393,8 +420,6 @@ public class OrganizationContext {
         if (activeInitiativesAndStatus == null) activeInitiativesAndStatus = new ContextEntry<>("");
         if (upcomingDeadlinesAndEvents == null) upcomingDeadlinesAndEvents = new ContextEntry<>("");
         if (currentMetrics == null) currentMetrics = new ContextEntry<>("");
-        if (officerRosterAndOwnership == null) officerRosterAndOwnership = new ContextEntry<>("");
-        if (keyPartnersStakeholders == null) keyPartnersStakeholders = new ContextEntry<>("");
         if (currentBlockersRisks == null) currentBlockersRisks = new ContextEntry<>("");
         if (pendingDecisions == null) pendingDecisions = new ContextEntry<>("");
         if (preferredToneStyle == null) preferredToneStyle = new ContextEntry<>("");

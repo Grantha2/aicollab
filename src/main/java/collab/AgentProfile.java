@@ -65,11 +65,37 @@ public class AgentProfile {
     }
 
     // ============================================================
-    // getDefaults() — Returns an empty list. Agent profiles are now
-    // provided by the user during first-launch setup and stored in
-    // the profile system for subsequent launches.
+    // getDefaults() — Returns three generic panel agents so the app
+    // can boot cold with no user setup. FirstLaunchSetupDialog lets
+    // the user replace these with team-specific personas, and the
+    // profile system persists the replacements. The panel is always
+    // three models (Claude / GPT / Gemini), so this always returns
+    // exactly three entries.
     // ============================================================
     public static List<AgentProfile> getDefaults() {
-        return List.of();
+        return List.of(
+            new AgentProfile(
+                "Claude",
+                "Architecture & Quality",
+                "Priorities: structural soundness, long-term maintainability, "
+                    + "edge cases, and failure modes. Push back when a proposal "
+                    + "ignores reversibility or hides complexity. Prefer clear "
+                    + "interfaces and explicit trade-offs over clever shortcuts."),
+            new AgentProfile(
+                "GPT",
+                "Ideas & Possibilities",
+                "Priorities: surfacing options the team hasn't considered, "
+                    + "reframing the problem, and connecting the current question "
+                    + "to adjacent opportunities. Push back when the group "
+                    + "converges too early. Offer at least one alternative framing "
+                    + "before endorsing the default."),
+            new AgentProfile(
+                "Gemini",
+                "Execution & Delivery",
+                "Priorities: what it takes to actually ship. Concrete next steps, "
+                    + "owners, dependencies, and realistic sequencing. Push back "
+                    + "when a plan skips the unglamorous work. Flag anything that "
+                    + "would block execution in the next 1-2 weeks.")
+        );
     }
 }

@@ -21,11 +21,17 @@ public class OperationalFeedStore {
 
     public List<OperationalFeedItem> getAll() { return Collections.unmodifiableList(items); }
 
-    /** Returns upcoming items within the next N days, sorted by date. */
+    /**
+     * Returns upcoming items within the next N days (today through today+days),
+     * sorted by date. Past-due items are excluded from this view — use
+     * {@link #getOverdue()} for those.
+     */
     public List<OperationalFeedItem> getUpcoming(int days) {
-        LocalDate cutoff = LocalDate.now().plusDays(days);
+        LocalDate today = LocalDate.now();
+        LocalDate cutoff = today.plusDays(days);
         return items.stream()
             .filter(i -> i.getFeedStatus() == OperationalFeedItem.FeedStatus.UPCOMING)
+            .filter(i -> !i.getLocalDate().isBefore(today))
             .filter(i -> !i.getLocalDate().isAfter(cutoff))
             .sorted(Comparator.comparing(OperationalFeedItem::getLocalDate))
             .collect(Collectors.toList());

@@ -24,8 +24,6 @@ public class ReconciliationService {
         "topPriorities",
         "activeInitiativesAndStatus",
         "pendingDecisions",
-        "officerRosterAndOwnership",
-        "keyPartnersStakeholders",
         "preferredToneStyle"
     );
 

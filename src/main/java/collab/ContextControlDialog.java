@@ -18,21 +18,33 @@ public class ContextControlDialog extends JDialog {
     private final ContextController controller;
     private final ConversationContext context;
     private final ProfileSet activeProfileSet;
+    /**
+     * Invoked when the dialog mutates the active ProfileSet (team context
+     * edits). MainGui uses this to persist the ProfileSet via ProfileLibrary
+     * and rebuild Maestro so the changes take effect immediately.
+     */
+    private final Runnable onProfileSetSaved;
+    /**
+     * Opens the full Profile Set editor. Supplied by MainGui so this dialog
+     * doesn't need to know about ProfileLibrary or Maestro rebuilds.
+     */
+    private final Runnable onEditProfileRequested;
 
     public ContextControlDialog(Frame owner, ContextController controller,
-                                ConversationContext context, ProfileSet activeProfileSet) {
+                                ConversationContext context, ProfileSet activeProfileSet,
+                                Runnable onProfileSetSaved, Runnable onEditProfileRequested) {
         super(owner, "Context Control", true);
         this.controller = controller;
         this.context = context;
         this.activeProfileSet = activeProfileSet;
+        this.onProfileSetSaved = onProfileSetSaved;
+        this.onEditProfileRequested = onEditProfileRequested;
 
         setSize(700, 500);
         setLocationRelativeTo(owner);
 
         JTabbedPane tabs = new JTabbedPane();
-        tabs.addTab("Team Context", buildTeamContextTab());
-        tabs.addTab("Agent Identities", buildAgentIdentitiesTab());
-        tabs.addTab("Stakeholder", buildStakeholderTab());
+        tabs.addTab("Profile", buildProfileTab());
         tabs.addTab("Organization", buildOrgContextTab());
         tabs.addTab("Task Context", buildTaskContextTab());
         tabs.addTab("History", buildHistoryTab());
@@ -59,109 +71,122 @@ public class ContextControlDialog extends JDialog {
         add(bottomPanel, BorderLayout.SOUTH);
     }
 
-    private JPanel buildTeamContextTab() {
+    /**
+     * Single consolidated tab for the identity layer of context:
+     * team context (persisted to ProfileSet), agent-identity toggle +
+     * per-agent include checkboxes, stakeholder toggle, and a link to
+     * the full Profile Set editor. Full CRUD lives in
+     * ProfileSetEditorDialog, not here.
+     */
+    private JPanel buildProfileTab() {
         JPanel panel = new JPanel(new BorderLayout(8, 8));
         panel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
-        JCheckBox toggle = new JCheckBox("Include team context in prompts",
+        // Header: profile set name + Edit button
+        JPanel header = new JPanel(new BorderLayout(8, 0));
+        String headerText = activeProfileSet != null
+                ? "Profile set: " + activeProfileSet.getName()
+                : "Profile set: (none)";
+        JLabel headerLabel = new JLabel(headerText);
+        headerLabel.setFont(headerLabel.getFont().deriveFont(Font.BOLD));
+        header.add(headerLabel, BorderLayout.WEST);
+
+        JButton editBtn = new JButton("Edit Profile...");
+        editBtn.setToolTipText("Open the full Profile Set editor to add/remove agents and stakeholders.");
+        editBtn.addActionListener(e -> {
+            if (onEditProfileRequested != null) {
+                dispose();
+                onEditProfileRequested.run();
+            }
+        });
+        header.add(editBtn, BorderLayout.EAST);
+        panel.add(header, BorderLayout.NORTH);
+
+        // Center: team context editor + toggle lists
+        JPanel center = new JPanel();
+        center.setLayout(new BoxLayout(center, BoxLayout.Y_AXIS));
+
+        // --- Team context section ---
+        JPanel teamSection = new JPanel(new BorderLayout(4, 4));
+        teamSection.setBorder(BorderFactory.createTitledBorder("Team Context"));
+
+        JCheckBox teamToggle = new JCheckBox("Include team context in prompts",
                 controller.shouldIncludeTeamContext());
-        toggle.addActionListener(e -> controller.setIncludeTeamContext(toggle.isSelected()));
-        panel.add(toggle, BorderLayout.NORTH);
+        teamToggle.addActionListener(e -> controller.setIncludeTeamContext(teamToggle.isSelected()));
+        teamSection.add(teamToggle, BorderLayout.NORTH);
 
-        String currentText = controller.getTeamContextOverride() != null
-                ? controller.getTeamContextOverride()
+        String teamText = (activeProfileSet != null && activeProfileSet.getTeamContext() != null)
+                ? activeProfileSet.getTeamContext()
                 : PromptBuilder.DEFAULT_TEAM_CONTEXT;
-        JTextArea textArea = new JTextArea(currentText);
-        textArea.setLineWrap(true);
-        textArea.setWrapStyleWord(true);
-        panel.add(new JScrollPane(textArea), BorderLayout.CENTER);
+        JTextArea teamArea = new JTextArea(teamText, 6, 40);
+        teamArea.setLineWrap(true);
+        teamArea.setWrapStyleWord(true);
+        teamSection.add(new JScrollPane(teamArea), BorderLayout.CENTER);
 
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        JButton applyBtn = new JButton("Apply Override");
-        applyBtn.addActionListener(e -> {
-            String text = textArea.getText().trim();
-            controller.setTeamContextOverride(text.isEmpty() ? null : text);
+        JPanel teamButtons = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JButton saveTeamBtn = new JButton("Save to Profile");
+        saveTeamBtn.setToolTipText("Persists this team context to the active profile set on disk.");
+        saveTeamBtn.addActionListener(e -> {
+            if (activeProfileSet == null) return;
+            activeProfileSet.setTeamContext(teamArea.getText());
+            if (onProfileSetSaved != null) {
+                onProfileSetSaved.run();
+            }
         });
-        JButton resetBtn = new JButton("Reset to Default");
-        resetBtn.addActionListener(e -> {
-            textArea.setText(PromptBuilder.DEFAULT_TEAM_CONTEXT);
-            controller.setTeamContextOverride(null);
-        });
-        buttons.add(applyBtn);
-        buttons.add(resetBtn);
-        panel.add(buttons, BorderLayout.SOUTH);
+        JButton resetTeamBtn = new JButton("Reset to Built-in Default");
+        resetTeamBtn.addActionListener(e -> teamArea.setText(PromptBuilder.DEFAULT_TEAM_CONTEXT));
+        teamButtons.add(saveTeamBtn);
+        teamButtons.add(resetTeamBtn);
+        teamSection.add(teamButtons, BorderLayout.SOUTH);
+        center.add(teamSection);
 
-        return panel;
-    }
+        // --- Agents section (toggles only, no editing) ---
+        JPanel agentsSection = new JPanel();
+        agentsSection.setLayout(new BoxLayout(agentsSection, BoxLayout.Y_AXIS));
+        agentsSection.setBorder(BorderFactory.createTitledBorder("Agent Identities"));
 
-    private JPanel buildAgentIdentitiesTab() {
-        JPanel panel = new JPanel(new BorderLayout(8, 8));
-        panel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-
-        JCheckBox masterToggle = new JCheckBox("Include agent identities in prompts",
+        JCheckBox agentMaster = new JCheckBox("Include agent identities in prompts",
                 controller.shouldIncludeAgentIdentity());
-        masterToggle.addActionListener(e ->
-                controller.setIncludeAgentIdentity(masterToggle.isSelected()));
-        panel.add(masterToggle, BorderLayout.NORTH);
+        agentMaster.addActionListener(e ->
+                controller.setIncludeAgentIdentity(agentMaster.isSelected()));
+        agentMaster.setAlignmentX(LEFT_ALIGNMENT);
+        agentsSection.add(agentMaster);
 
-        JPanel agentsPanel = new JPanel(new GridLayout(1, 3, 8, 0));
         if (activeProfileSet != null && activeProfileSet.getAgents() != null) {
             for (AgentProfile agent : activeProfileSet.getAgents()) {
-                agentsPanel.add(buildAgentCard(agent));
+                JCheckBox agentBox = new JCheckBox(
+                        agent.getName() + " \u00b7 " + agent.getPerspective(),
+                        controller.shouldIncludeAgent(agent.getName()));
+                agentBox.setAlignmentX(LEFT_ALIGNMENT);
+                agentBox.addActionListener(e ->
+                        controller.setAgentToggle(agent.getName(), agentBox.isSelected()));
+                agentsSection.add(agentBox);
             }
         }
-        panel.add(new JScrollPane(agentsPanel), BorderLayout.CENTER);
+        center.add(agentsSection);
 
-        return panel;
-    }
+        // --- Stakeholders section (toggle only) ---
+        JPanel stakeholdersSection = new JPanel();
+        stakeholdersSection.setLayout(new BoxLayout(stakeholdersSection, BoxLayout.Y_AXIS));
+        stakeholdersSection.setBorder(BorderFactory.createTitledBorder("Stakeholders"));
 
-    private JPanel buildAgentCard(AgentProfile agent) {
-        JPanel card = new JPanel(new BorderLayout(4, 4));
-        card.setBorder(BorderFactory.createTitledBorder(agent.getName()));
-
-        JCheckBox toggle = new JCheckBox("Include",
-                controller.shouldIncludeAgent(agent.getName()));
-        toggle.addActionListener(e ->
-                controller.setAgentToggle(agent.getName(), toggle.isSelected()));
-        card.add(toggle, BorderLayout.NORTH);
-
-        JTextArea briefing = new JTextArea(agent.toBriefing());
-        briefing.setEditable(false);
-        briefing.setLineWrap(true);
-        briefing.setWrapStyleWord(true);
-        briefing.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
-        card.add(new JScrollPane(briefing), BorderLayout.CENTER);
-
-        return card;
-    }
-
-    private JPanel buildStakeholderTab() {
-        JPanel panel = new JPanel(new BorderLayout(8, 8));
-        panel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-
-        JCheckBox toggle = new JCheckBox("Include stakeholder context in prompts",
+        JCheckBox stakeholderToggle = new JCheckBox("Include stakeholder context in prompts",
                 controller.shouldIncludeStakeholderProfile());
-        toggle.addActionListener(e ->
-                controller.setIncludeStakeholderProfile(toggle.isSelected()));
-        panel.add(toggle, BorderLayout.NORTH);
+        stakeholderToggle.addActionListener(e ->
+                controller.setIncludeStakeholderProfile(stakeholderToggle.isSelected()));
+        stakeholderToggle.setAlignmentX(LEFT_ALIGNMENT);
+        stakeholdersSection.add(stakeholderToggle);
 
-        JPanel fieldsPanel = new JPanel(new GridLayout(0, 1, 4, 4));
         if (activeProfileSet != null && activeProfileSet.getStakeholders() != null) {
             for (StakeholderProfile sp : activeProfileSet.getStakeholders()) {
-                JPanel row = new JPanel(new BorderLayout());
-                row.setBorder(BorderFactory.createTitledBorder(
-                        sp.getName() + " — " + sp.getRole()));
-                JTextArea briefing = new JTextArea(sp.toBriefing());
-                briefing.setEditable(false);
-                briefing.setLineWrap(true);
-                briefing.setWrapStyleWord(true);
-                briefing.setRows(4);
-                row.add(new JScrollPane(briefing), BorderLayout.CENTER);
-                fieldsPanel.add(row);
+                JLabel row = new JLabel("  \u2022 " + sp.getName() + " \u2014 " + sp.getRole());
+                row.setAlignmentX(LEFT_ALIGNMENT);
+                stakeholdersSection.add(row);
             }
         }
-        panel.add(new JScrollPane(fieldsPanel), BorderLayout.CENTER);
+        center.add(stakeholdersSection);
 
+        panel.add(new JScrollPane(center), BorderLayout.CENTER);
         return panel;
     }
 
@@ -183,6 +208,8 @@ public class ContextControlDialog extends JDialog {
         gbc.anchor = GridBagConstraints.NORTHWEST;
         gbc.fill = GridBagConstraints.HORIZONTAL;
 
+        // NOTE: roster + stakeholders intentionally omitted here — they live
+        // in memberProfiles (roster) and the active ProfileSet (stakeholders).
         int row = 0;
         String[][] fields = {
             {"Last Updated", orgCtx.getLastUpdated()},
@@ -192,8 +219,6 @@ public class ContextControlDialog extends JDialog {
             {"Active Initiatives and Status", orgCtx.getActiveInitiativesAndStatus()},
             {"Upcoming Deadlines and Events", orgCtx.getUpcomingDeadlinesAndEvents()},
             {"Current Metrics", orgCtx.getCurrentMetrics()},
-            {"Officer Roster and Ownership", orgCtx.getOfficerRosterAndOwnership()},
-            {"Key Partners / Stakeholders", orgCtx.getKeyPartnersStakeholders()},
             {"Current Blockers / Risks", orgCtx.getCurrentBlockersRisks()},
             {"Pending Decisions", orgCtx.getPendingDecisions()},
             {"Preferred Tone / Style", orgCtx.getPreferredToneStyle()},
@@ -265,12 +290,10 @@ public class ContextControlDialog extends JDialog {
             orgCtx.setActiveInitiativesAndStatus(fieldAreas.get(4).getText().trim());
             orgCtx.setUpcomingDeadlinesAndEvents(fieldAreas.get(5).getText().trim());
             orgCtx.setCurrentMetrics(fieldAreas.get(6).getText().trim());
-            orgCtx.setOfficerRosterAndOwnership(fieldAreas.get(7).getText().trim());
-            orgCtx.setKeyPartnersStakeholders(fieldAreas.get(8).getText().trim());
-            orgCtx.setCurrentBlockersRisks(fieldAreas.get(9).getText().trim());
-            orgCtx.setPendingDecisions(fieldAreas.get(10).getText().trim());
-            orgCtx.setPreferredToneStyle(fieldAreas.get(11).getText().trim());
-            orgCtx.save();
+            orgCtx.setCurrentBlockersRisks(fieldAreas.get(7).getText().trim());
+            orgCtx.setPendingDecisions(fieldAreas.get(8).getText().trim());
+            orgCtx.setPreferredToneStyle(fieldAreas.get(9).getText().trim());
+            controller.saveOrganizationContext();
             JOptionPane.showMessageDialog(panel, "Organization context saved.",
                     "Saved", JOptionPane.INFORMATION_MESSAGE);
         });
@@ -449,7 +472,10 @@ public class ContextControlDialog extends JDialog {
         JButton refreshBtn = new JButton("Refresh Preview");
         refreshBtn.addActionListener(e -> {
             StringBuilder sb = new StringBuilder();
-            String teamCtx = controller.getEffectiveTeamContext(PromptBuilder.DEFAULT_TEAM_CONTEXT);
+            String profileTeam = (activeProfileSet != null && activeProfileSet.getTeamContext() != null)
+                    ? activeProfileSet.getTeamContext()
+                    : PromptBuilder.DEFAULT_TEAM_CONTEXT;
+            String teamCtx = controller.getEffectiveTeamContext(profileTeam);
             sb.append("=== TEAM CONTEXT ===\n");
             sb.append(teamCtx.isEmpty() ? "(disabled)\n" : teamCtx);
             sb.append("\n");
@@ -529,7 +555,8 @@ public class ContextControlDialog extends JDialog {
         dispose();
         // Re-open to reflect changes
         new ContextControlDialog(
-                (Frame) getOwner(), controller, context, activeProfileSet
+                (Frame) getOwner(), controller, context, activeProfileSet,
+                onProfileSetSaved, onEditProfileRequested
         ).setVisible(true);
     }
 }
