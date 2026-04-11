@@ -71,8 +71,33 @@ public class Config {
 
     public String getGeminiKey()   { return props.getProperty("gemini.key"); }
     public String getGeminiModel() { return props.getProperty("gemini.model", "gemini-3.1-pro-preview"); }
-    
-   
+
+    // --- CLOUD CONTEXT (AWS Lambda + MongoDB) ---
+    // Shared team context lives behind an API Gateway endpoint instead of
+    // a per-user JSON file. Off by default so solo users are unaffected.
+
+    public boolean isAwsContextEnabled() {
+        return Boolean.parseBoolean(props.getProperty("aws.context.enabled", "false"));
+    }
+    public String getAwsContextUrl()    { return props.getProperty("aws.context.url", ""); }
+    public String getAwsContextApiKey() { return props.getProperty("aws.context.apiKey", ""); }
+    public String getAwsContextOrgId()  { return props.getProperty("aws.context.orgId", ""); }
+
+    // --- MANAGED AGENTS (Claude Managed Agents + Files API) ---
+    // Distinct from claude.key/claude.url because the beta lives on its own
+    // versioned surface and may point at a different base URL or key.
+
+    public String getManagedAgentsUrl() {
+        return props.getProperty("managed.agents.url", "https://api.anthropic.com");
+    }
+    public String getManagedAgentsKey() {
+        // Fall back to the Claude key if the user hasn't set a separate one.
+        String k = props.getProperty("managed.agents.key", "");
+        return (k == null || k.isBlank()) ? getClaudeKey() : k;
+    }
+    public String getManagedAgentsModel() {
+        return props.getProperty("managed.agents.model", "claude-opus-4-6");
+    }
 
     // --- TUNING PARAMETERS ---
     // These control how the debate works. Defaults are sensible;

@@ -354,11 +354,33 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             rebuildStakeholderCombo();
             rebuildMaestro();
 
+            // Swap in cloud-backed context source when the team deployment is on.
+            // Off by default -> local JSON continues to work unchanged.
+            if (config.isAwsContextEnabled()) {
+                HttpClient contextHttp = HttpClient.newHttpClient();
+                contextController.setContextSource(new AwsContextSource(
+                        contextHttp,
+                        config.getAwsContextUrl(),
+                        config.getAwsContextApiKey(),
+                        config.getAwsContextOrgId()));
+            }
+
             // Initialize agentic infrastructure
             OrganizationContext orgCtx = contextController.getOrganizationContext();
             changeLog = new ContextChangeLog();
             reconciliationService = new ReconciliationService(orgCtx, changeLog);
             dailyUpdateFn = new DailyContextUpdateFunction(orgCtx, reconciliationService);
+
+            // Managed Agents client (Files API + session streaming). Optional —
+            // RoomBookingTask and other AgenticModeTask subclasses gate on
+            // ManagedAgentClient.isConfigured() so cold boots without keys
+            // still launch cleanly.
+            HttpClient agentHttp = HttpClient.newHttpClient();
+            ManagedAgentClient managedAgentClient = new ManagedAgentClient(
+                    agentHttp,
+                    config.getManagedAgentsUrl(),
+                    config.getManagedAgentsKey(),
+                    config.getManagedAgentsModel());
 
             // Initialize structured data stores
             InitiativeStore initiativeStore = new InitiativeStore();
@@ -376,6 +398,13 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             taskRegistry.register(new WeeklyReportTask());
             taskRegistry.register(new StakeholderBriefingTask());
 
+            // Managed-agent POC: Book Room (Events category). Registered
+            // only when the managed-agents client is configured so the
+            // sidebar doesn't advertise a task that can't actually run.
+            if (managedAgentClient.isConfigured()) {
+                taskRegistry.register(new RoomBookingTask());
+            }
+
             // Register user-defined workflows
             for (WorkflowDefinition wd : workflowStore.getAll()) {
                 if (wd.isEnabled()) taskRegistry.register(new UserWorkflowTask(wd));
@@ -386,6 +415,7 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
 
             agenticPanel = new AgenticRoutinesPanel(orgCtx, reconciliationService, changeLog,
                     config, taskRegistry, feedStore, workflowStore, recommendationEngine);
+            agenticPanel.setManagedAgentClient(managedAgentClient);
 
             // Replace placeholder with real agentic panel
             viewContainer.remove(viewContainer.getComponentCount() - 1);

@@ -34,6 +34,13 @@ public class AgenticRoutinesPanel extends JPanel {
     private final WorkflowStore workflowStore;
     private final RecommendationEngine recommendationEngine;
 
+    // Optional — managed-agents subsystem (null when disabled in config).
+    private ManagedAgentClient managedAgentClient;
+
+    // Active managed-agent session (null when no agentic-mode task is running).
+    private String activeSessionId;
+    private AgenticModeTask activeSessionTask;
+
     // UI components
     private final JPanel sidebarContent;    // left sidebar content (tasks + health + upcoming)
     private final JPanel mainPanel;         // right: function output + approvals
@@ -506,7 +513,12 @@ public class AgenticRoutinesPanel extends JPanel {
     }
 
     private AgenticTaskContext buildTaskContext() {
-        return new AgenticTaskContext(orgContext, reconciliation, changeLog, config, this);
+        return new AgenticTaskContext(orgContext, reconciliation, changeLog, config, this, managedAgentClient);
+    }
+
+    /** Wires in the managed-agent client after construction (see MainGui.initApplication). */
+    public void setManagedAgentClient(ManagedAgentClient client) {
+        this.managedAgentClient = client;
     }
 
     // ===================== Public API for tasks to call back =====================
@@ -531,6 +543,213 @@ public class AgenticRoutinesPanel extends JPanel {
         outputArea.add(card);
         mainPanel.revalidate();
         mainPanel.repaint();
+    }
+
+    // ===================== Managed Agent streaming =====================
+
+    /**
+     * Records the currently-running managed-agent session so the panel
+     * can send follow-up events (e.g. a confirmation) on the same
+     * conversation. Called by AgenticModeTask as soon as a session id
+     * comes back from the API.
+     */
+    public void setActiveAgentSession(String sessionId,
+                                       ManagedAgentClient client,
+                                       AgenticModeTask task) {
+        this.activeSessionId = sessionId;
+        this.managedAgentClient = client;
+        this.activeSessionTask = task;
+    }
+
+    /**
+     * Renders one streamed AgentEvent in the output area. Always hops
+     * to the EDT before touching Swing — callers may be SwingWorker
+     * background threads.
+     *
+     * Special handling: if a text event contains the
+     * "AWAITING_CONFIRMATION: optA | optB | optC" marker, we pop a
+     * radio-selection dialog and send the user's choice as a follow-up
+     * event on the same session.
+     */
+    public void appendAgentEvent(AgentEvent ev) {
+        if (ev == null) return;
+        if (!SwingUtilities.isEventDispatchThread()) {
+            final AgentEvent captured = ev;
+            SwingUtilities.invokeLater(() -> appendAgentEvent(captured));
+            return;
+        }
+
+        switch (ev.type()) {
+            case "text" -> {
+                outputArea.add(createCard("Agent", ev.content(),
+                        new Color(232, 245, 233), new Color(129, 199, 132)));
+                maybeHandleConfirmationMarker(ev.content());
+            }
+            case "tool_use" -> {
+                outputArea.add(createCard("Tool call", ev.content(),
+                        new Color(227, 242, 253), new Color(144, 202, 249)));
+            }
+            case "tool_result" -> {
+                outputArea.add(createCard("Tool result", ev.content(),
+                        new Color(245, 245, 245), new Color(189, 189, 189)));
+            }
+            case "file" -> {
+                outputArea.add(createFileCard(ev.fileId(), ev.content()));
+            }
+            case "status" -> {
+                outputArea.add(createCard("Status", ev.content(),
+                        new Color(255, 249, 196), new Color(251, 192, 45)));
+            }
+            default -> {
+                outputArea.add(createCard(ev.type(), String.valueOf(ev.content()),
+                        new Color(245, 245, 245), new Color(189, 189, 189)));
+            }
+        }
+
+        outputArea.add(Box.createVerticalStrut(6));
+        mainPanel.revalidate();
+        mainPanel.repaint();
+    }
+
+    /**
+     * Detects the AWAITING_CONFIRMATION marker on a text event and, if
+     * present, pops a radio dialog for the user to pick one option.
+     * The selection is then sent back into the same session as a
+     * follow-up user message.
+     */
+    private void maybeHandleConfirmationMarker(String text) {
+        if (text == null) return;
+        int idx = text.indexOf("AWAITING_CONFIRMATION:");
+        if (idx < 0) return;
+
+        String tail = text.substring(idx + "AWAITING_CONFIRMATION:".length()).trim();
+        // Stop at the first newline if the agent added more text after the options line.
+        int nl = tail.indexOf('\n');
+        if (nl >= 0) tail = tail.substring(0, nl);
+
+        String[] rawOptions = tail.split("\\|");
+        List<String> options = new ArrayList<>();
+        for (String o : rawOptions) {
+            String t = o.trim();
+            if (!t.isEmpty()) options.add(t);
+        }
+        if (options.isEmpty()) return;
+
+        if (activeSessionId == null || managedAgentClient == null) {
+            outputArea.add(createCard("Confirmation needed",
+                    "Agent asked for confirmation but the session is no longer active.",
+                    new Color(255, 235, 238), new Color(229, 115, 115)));
+            return;
+        }
+
+        final String sessionId = activeSessionId;
+        final ManagedAgentClient client = managedAgentClient;
+        final List<String> opts = options;
+
+        // Dialog must run on the EDT; we're already on it here.
+        String[] optArr = opts.toArray(new String[0]);
+        String chosen = (String) JOptionPane.showInputDialog(
+                this,
+                "Select an option to confirm:",
+                "Agent needs confirmation",
+                JOptionPane.QUESTION_MESSAGE,
+                null,
+                optArr,
+                optArr[0]);
+
+        if (chosen == null) {
+            outputArea.add(createCard("Cancelled",
+                    "Confirmation skipped \u2014 session left open.",
+                    new Color(255, 249, 196), new Color(251, 192, 45)));
+            return;
+        }
+
+        final String choice = chosen;
+        setStatus("Sending confirmation to agent\u2026");
+
+        new SwingWorker<Void, AgentEvent>() {
+            @Override
+            protected Void doInBackground() {
+                client.sendEvent(sessionId,
+                        "Confirmed: " + choice,
+                        List.of(),
+                        this::publish);
+                return null;
+            }
+
+            @Override
+            protected void process(java.util.List<AgentEvent> chunks) {
+                chunks.forEach(AgenticRoutinesPanel.this::appendAgentEvent);
+            }
+
+            @Override
+            protected void done() {
+                setStatus("Agent follow-up complete.");
+            }
+        }.execute();
+    }
+
+    /**
+     * Builds a card with a "Download" button for a file event. Clicking
+     * the button prompts for a save location and streams the file down
+     * via the Managed Agents Files API.
+     */
+    private JPanel createFileCard(String fileId, String displayName) {
+        JPanel card = new JPanel(new BorderLayout(8, 4));
+        card.setBackground(new Color(237, 231, 246));
+        card.setAlignmentX(LEFT_ALIGNMENT);
+        card.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(149, 117, 205), 1),
+            BorderFactory.createEmptyBorder(10, 14, 10, 14)
+        ));
+
+        JLabel title = new JLabel("File ready: "
+                + (displayName == null || displayName.isBlank() ? fileId : displayName));
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 13f));
+        card.add(title, BorderLayout.NORTH);
+
+        JButton downloadBtn = new JButton("Download");
+        downloadBtn.addActionListener(e -> {
+            if (managedAgentClient == null) {
+                JOptionPane.showMessageDialog(this,
+                        "Managed Agents client is not configured.",
+                        "Download failed", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            JFileChooser chooser = new JFileChooser();
+            chooser.setSelectedFile(new java.io.File(
+                    displayName == null || displayName.isBlank() ? fileId : displayName));
+            if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+            java.nio.file.Path out = chooser.getSelectedFile().toPath();
+
+            new SwingWorker<Boolean, Void>() {
+                @Override
+                protected Boolean doInBackground() {
+                    return managedAgentClient.downloadFile(fileId, out);
+                }
+                @Override
+                protected void done() {
+                    try {
+                        boolean ok = get();
+                        JOptionPane.showMessageDialog(AgenticRoutinesPanel.this,
+                                ok ? "Saved to " + out : "Download failed \u2014 see log.",
+                                ok ? "Download complete" : "Download failed",
+                                ok ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.ERROR_MESSAGE);
+                    } catch (Exception ex) {
+                        JOptionPane.showMessageDialog(AgenticRoutinesPanel.this,
+                                "Download failed: " + ex.getMessage(),
+                                "Download failed", JOptionPane.ERROR_MESSAGE);
+                    }
+                }
+            }.execute();
+        });
+
+        JPanel south = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        south.setOpaque(false);
+        south.add(downloadBtn);
+        card.add(south, BorderLayout.SOUTH);
+
+        return card;
     }
 
     public void handleReconciliationResult(ReconciliationService.ReconciliationResult result) {
