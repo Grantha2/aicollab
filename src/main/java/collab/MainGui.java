@@ -47,6 +47,7 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     private JTextArea promptArea;
     private JTextArea synthesisArea;
     private JLabel statusLabel;
+    private JLabel activePanelLabel;
     private int cycleCount = 0;
 
     // View panel for debate
@@ -289,9 +290,33 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
 
     private JComponent buildStatusBar() {
         statusLabel = new JLabel("Ready");
+        activePanelLabel = new JLabel(" ");
+        activePanelLabel.setFont(activePanelLabel.getFont().deriveFont(Font.PLAIN, 11f));
+        activePanelLabel.setForeground(new Color(90, 90, 90));
+        activePanelLabel.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
+
         JPanel panel = new JPanel(new BorderLayout());
         panel.add(statusLabel, BorderLayout.CENTER);
+        panel.add(activePanelLabel, BorderLayout.EAST);
         return panel;
+    }
+
+    /**
+     * Renders the three active panel agents in the status bar so it is
+     * always obvious which three personas Maestro will use.
+     */
+    private void updateActivePanelLabel() {
+        if (activePanelLabel == null) return;
+        if (activeProfileSet == null || activeProfileSet.getAgents() == null
+                || activeProfileSet.getAgents().size() < 3) {
+            activePanelLabel.setText("Panel: (not configured)");
+            return;
+        }
+        List<AgentProfile> agents = activeProfileSet.getAgents();
+        activePanelLabel.setText("Panel: "
+                + agents.get(0).getName() + " \u00b7 " + agents.get(0).getPerspective() + "  \u2502  "
+                + agents.get(1).getName() + " \u00b7 " + agents.get(1).getPerspective() + "  \u2502  "
+                + agents.get(2).getName() + " \u00b7 " + agents.get(2).getPerspective());
     }
 
     private JPanel wrap(String title, JComponent component) {
@@ -420,6 +445,17 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     }
 
     private void rebuildMaestro() {
+        // Maestro requires exactly 3 agent slots (Claude / GPT / Gemini).
+        // ProfileSetEditorDialog enforces this on save, but guard defensively
+        // so a manually-edited profile-set.json can't crash the app silently.
+        List<AgentProfile> agents = activeProfileSet.getAgents();
+        if (agents == null || agents.size() < 3) {
+            statusLabel.setText("Active profile set has fewer than 3 agents — edit the profile to continue.");
+            maestro = null;
+            updateActivePanelLabel();
+            return;
+        }
+
         HttpClient httpClient = HttpClient.newHttpClient();
         int maxTokens = config.getMaxResponseTokens();
 
@@ -435,13 +471,13 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         PromptBuilder promptBuilder = new PromptBuilder(conversationContext, effectiveTeamCtx, contextController);
         SessionStore sessionStore = SessionStore.createNewDefaultSession();
 
-        List<AgentProfile> agents = activeProfileSet.getAgents();
         maestro = new Maestro(
                 claudeClient, gptClient, geminiClient,
                 agents.get(0), agents.get(1), agents.get(2),
                 promptBuilder, conversationContext,
                 config.getDebateRounds(), maxTokens, sessionStore);
         maestro.setDebateListener(this);
+        updateActivePanelLabel();
     }
 
     // ============================================================
@@ -693,8 +729,21 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     }
 
     private void onOpenContextControl() {
+        Runnable onProfileSaved = () -> {
+            try {
+                profileLibrary.saveSet(activeProfileSet, activeProfileSet.getName());
+                rebuildMaestro();
+                statusLabel.setText("Saved profile set: " + activeProfileSet.getName());
+            } catch (Exception e) {
+                JOptionPane.showMessageDialog(this,
+                        "Unable to save profile set: " + e.getMessage(),
+                        "Profile Save Error", JOptionPane.ERROR_MESSAGE);
+            }
+        };
+        Runnable onEditProfile = this::onCreateProfileSet;
         ContextControlDialog dialog = new ContextControlDialog(
-                this, contextController, conversationContext, activeProfileSet);
+                this, contextController, conversationContext, activeProfileSet,
+                onProfileSaved, onEditProfile);
         dialog.setVisible(true);
     }
 

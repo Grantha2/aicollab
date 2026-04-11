@@ -84,12 +84,30 @@ public class Main {
                 config.getGeminiModel(), maxTokens);
 
         // ==========================
-        // STEP 4: CREATE AGENT PROFILES
+        // STEP 4: LOAD THE ACTIVE PROFILE SET
         // ==========================
-        // Each AI model gets a distinct identity: Claude focuses on
-        // architecture & quality, GPT on ideas & possibilities, Gemini
-        // on execution & delivery. These shape how each model responds.
-        List<AgentProfile> agents = AgentProfile.getDefaults();
+        // The profile system is the single source of truth for the AI panel
+        // and the list of stakeholders. The GUI uses the same ProfileLibrary,
+        // so CLI and GUI stay in sync. If no profile exists yet,
+        // ensureDefaultExists() writes one from built-in defaults — the app
+        // always boots cold without requiring a setup wizard.
+        ProfileLibrary profileLibrary = new ProfileLibrary();
+        ProfileSet activeProfileSet;
+        try {
+            profileLibrary.ensureDefaultExists();
+            activeProfileSet = profileLibrary.loadSet("default");
+        } catch (java.io.IOException e) {
+            System.err.println("Failed to load profile set: " + e.getMessage());
+            System.err.println("Falling back to built-in defaults for this session.");
+            activeProfileSet = ProfileSet.fromDefaults();
+        }
+
+        List<AgentProfile> agents = activeProfileSet.getAgents();
+        if (agents == null || agents.size() < 3) {
+            System.err.println("Active profile set has fewer than 3 agents; "
+                    + "falling back to built-in defaults for this session.");
+            agents = AgentProfile.getDefaults();
+        }
         AgentProfile claudeAgent = agents.get(0);
         AgentProfile gptAgent    = agents.get(1);
         AgentProfile geminiAgent = agents.get(2);
@@ -97,9 +115,13 @@ public class Main {
         // ==========================
         // STEP 5: LOAD STAKEHOLDER PROFILES
         // ==========================
-        // The four team members. The user picks one before each cycle
-        // (the "hotseat"), and that profile gets injected into every prompt.
-        List<StakeholderProfile> stakeholders = StakeholderProfile.getDefaults();
+        // The team members from the active profile set. The user picks one
+        // before each cycle (the "hotseat"), and that profile gets injected
+        // into every prompt.
+        List<StakeholderProfile> stakeholders = activeProfileSet.getStakeholders();
+        if (stakeholders == null || stakeholders.isEmpty()) {
+            stakeholders = StakeholderProfile.getDefaults();
+        }
 
         // ==========================
         // STEP 6: CREATE MEMORY AND PROMPT BUILDER
@@ -109,7 +131,7 @@ public class Main {
         ConversationContext context = new ConversationContext(config.getMaxHistoryChars());
         Scanner scanner = new Scanner(System.in);
         SessionStore sessionStore = selectSessionStore(scanner, context);
-        PromptBuilder promptBuilder = new PromptBuilder(context);
+        PromptBuilder promptBuilder = new PromptBuilder(context, activeProfileSet.getTeamContext());
 
         // ==========================
         // STEP 7: CREATE THE MAESTRO

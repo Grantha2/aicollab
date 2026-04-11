@@ -136,6 +136,11 @@ public class ProfileSetEditorDialog extends JDialog {
         return panel;
     }
 
+    // The debate panel is always 3 models (Claude / GPT / Gemini) — Maestro's
+    // constructor takes exactly three agent slots. A profile set must provide
+    // three distinct, non-blank agents, or the panel can't be built.
+    private static final int REQUIRED_AGENT_COUNT = 3;
+
     private void onSave(ProfileSet seed) {
         String name = nameField.getText().trim();
         if (name.isEmpty()) {
@@ -151,6 +156,21 @@ public class ProfileSetEditorDialog extends JDialog {
                     agentName,
                     agentPerspectiveFields.get(i).getText().trim(),
                     agentLensAreas.get(i).getText().trim()));
+        }
+
+        if (agents.size() < REQUIRED_AGENT_COUNT) {
+            JOptionPane.showMessageDialog(this,
+                    "The debate panel requires exactly " + REQUIRED_AGENT_COUNT
+                            + " agents (Claude / GPT / Gemini slots).\n"
+                            + "Please fill in " + REQUIRED_AGENT_COUNT + " agents before saving.",
+                    "Validation",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        if (agents.size() > REQUIRED_AGENT_COUNT) {
+            // Panel only uses the first 3 slots; keep extras out of the saved set
+            // so what-you-see-is-what-you-get matches what the Maestro will use.
+            agents = new ArrayList<>(agents.subList(0, REQUIRED_AGENT_COUNT));
         }
 
         List<StakeholderProfile> stakeholders = seed != null && seed.getStakeholders() != null

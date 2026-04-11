@@ -84,11 +84,22 @@ public class StakeholderProfile {
     }
 
     // ============================================================
-    // getDefaults() — Returns an empty list. Stakeholder profiles are
-    // now provided by the user during first-launch setup and stored
-    // in the profile system for subsequent launches.
+    // getDefaults() — Returns a single generic "Operator" stakeholder
+    // so the app can boot cold with no user setup. FirstLaunchSetupDialog
+    // lets the user replace this with real team members, and the profile
+    // system persists them. Always returns at least one entry so
+    // stakeholder selection (GUI hotseat + CLI index) never crashes.
     // ============================================================
     public static List<StakeholderProfile> getDefaults() {
-        return List.of();
+        return List.of(new StakeholderProfile(
+            "Operator",
+            "Primary User",
+            "General",
+            "(not set)",
+            "Decisions within their own scope",
+            "Overall outcomes",
+            "Generic default profile — edit in the Profile Set editor to add "
+                + "real team members and their specific roles, KPIs, and context."
+        ));
     }
 }

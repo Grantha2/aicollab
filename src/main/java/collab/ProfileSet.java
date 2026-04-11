@@ -32,6 +32,10 @@ public class ProfileSet {
         return teamContext;
     }
 
+    public void setTeamContext(String teamContext) {
+        this.teamContext = teamContext;
+    }
+
     public List<AgentProfile> getAgents() {
         return agents;
     }

@@ -23,14 +23,13 @@ public class ContextController {
     private boolean includeTaskContext = true;
     private boolean includeOrgContext = true;
 
-    // null = use default from PromptBuilder
-    private String teamContextOverride = null;
-
     // Active task context (set when a task button is clicked)
     private TaskContext activeTaskContext = null;
 
-    // Organization context (shared, persistent)
-    private OrganizationContext organizationContext = OrganizationContext.load();
+    // Backing store for organization context. Defaults to the on-disk
+    // LocalContextSource; a follow-up PR will add AwsContextSource so this
+    // same controller can talk to an AWS API without any call-site changes.
+    private ContextSource contextSource = new LocalContextSource();
 
     // Per-model agent identity toggles (model name → enabled)
     private final Map<String, Boolean> agentToggles = new HashMap<>();
@@ -52,28 +51,46 @@ public class ContextController {
     public void setIncludeTaskContext(boolean v)       { this.includeTaskContext = v; }
     public void setIncludeOrgContext(boolean v)        { this.includeOrgContext = v; }
 
-    public OrganizationContext getOrganizationContext()              { return organizationContext; }
-    public void setOrganizationContext(OrganizationContext ctx)      { this.organizationContext = ctx; }
+    public OrganizationContext getOrganizationContext() {
+        return contextSource.get();
+    }
+
+    /**
+     * Persist in-place edits to the OrganizationContext returned by
+     * {@link #getOrganizationContext()} through the underlying
+     * {@link ContextSource}.
+     */
+    public void saveOrganizationContext() {
+        contextSource.save(contextSource.get());
+    }
+
+    /** Swap the backing store — used by tests and the future AwsContextSource. */
+    public void setContextSource(ContextSource source) {
+        this.contextSource = source != null ? source : new LocalContextSource();
+    }
 
     /**
      * Returns the org context block if enabled, empty string otherwise.
      */
     public String getEffectiveOrgContext() {
-        if (!includeOrgContext || organizationContext == null) return "";
-        return organizationContext.buildContextBlock();
+        if (!includeOrgContext) return "";
+        OrganizationContext ctx = contextSource.get();
+        if (ctx == null) return "";
+        return ctx.buildContextBlock();
     }
 
     public TaskContext getActiveTaskContext()          { return activeTaskContext; }
     public void setActiveTaskContext(TaskContext ctx)  { this.activeTaskContext = ctx; }
 
-    public String getTeamContextOverride()             { return teamContextOverride; }
-    public void setTeamContextOverride(String override) { this.teamContextOverride = override; }
-
-    // Returns the effective team context: override if set, null otherwise
-    // (caller should fall back to default).
-    public String getEffectiveTeamContext(String defaultContext) {
+    /**
+     * Returns the team context to include in prompts, or empty string when
+     * the team-context layer is toggled off. Team context text itself lives
+     * on {@link ProfileSet} — this controller only decides whether to
+     * include it.
+     */
+    public String getEffectiveTeamContext(String profileTeamContext) {
         if (!includeTeamContext) return "";
-        return teamContextOverride != null ? teamContextOverride : defaultContext;
+        return profileTeamContext == null ? "" : profileTeamContext;
     }
 
     public boolean shouldIncludeAgent(String modelName) {
