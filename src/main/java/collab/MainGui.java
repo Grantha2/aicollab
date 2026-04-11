@@ -52,6 +52,12 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     // View panel for debate
     private JPanel debateViewPanel;
 
+    // Agentic infrastructure
+    private ContextChangeLog changeLog;
+    private ReconciliationService reconciliationService;
+    private DailyContextUpdateFunction dailyUpdateFn;
+    private AgenticRoutinesPanel agenticPanel;
+
     public MainGui() {
         super("AI Collaboration Platform \u2014 Executive Suite");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -148,6 +154,11 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         setTitle("AI Collaboration Platform \u2014 " + viewName);
         statusLabel.setText("Switched to " + viewName + " view.");
 
+        // Trigger session-start check when agentic tab becomes visible
+        if (VIEW_AGENTIC.equals(viewName) && agenticPanel != null) {
+            agenticPanel.onTabShown();
+        }
+
         viewContainer.revalidate();
         viewContainer.repaint();
     }
@@ -204,8 +215,13 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         debateViewPanel.add(debateContentPanel, BorderLayout.CENTER);
         viewContainer.add(debateViewPanel, VIEW_DEBATE);
 
-        // Agentic Routines view: placeholder
-        viewContainer.add(new AgenticRoutinesPanel(), VIEW_AGENTIC);
+        // Agentic Routines view: placeholder until initApplication() creates real panel
+        JPanel agenticPlaceholder = new JPanel(new BorderLayout());
+        agenticPlaceholder.setBackground(new Color(245, 245, 250));
+        JLabel loadingLabel = new JLabel("Loading agentic routines...", SwingConstants.CENTER);
+        loadingLabel.setForeground(Color.GRAY);
+        agenticPlaceholder.add(loadingLabel, BorderLayout.CENTER);
+        viewContainer.add(agenticPlaceholder, VIEW_AGENTIC);
 
         return viewContainer;
     }
@@ -285,6 +301,12 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         return panel;
     }
 
+    private boolean needsSetup(ProfileSet profile) {
+        return (profile.getTeamContext() == null || profile.getTeamContext().isBlank())
+            && (profile.getAgents() == null || profile.getAgents().isEmpty())
+            && (profile.getStakeholders() == null || profile.getStakeholders().isEmpty());
+    }
+
     private void initApplication() {
         try {
             config = new Config("config.properties");
@@ -292,9 +314,59 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             profileLibrary.ensureDefaultExists();
             List<String> names = profileLibrary.listAvailableSets();
             activeProfileSet = profileLibrary.loadSet(names.getFirst());
+
+            // First-launch check: if profile has no agents or stakeholders, run setup wizard
+            if (needsSetup(activeProfileSet)) {
+                FirstLaunchSetupDialog setupDialog = new FirstLaunchSetupDialog(this);
+                setupDialog.setVisible(true);
+                if (!setupDialog.wasCancelled()) {
+                    activeProfileSet = setupDialog.buildProfileSet();
+                    profileLibrary.saveSet(activeProfileSet, "default");
+                }
+            }
+
             refreshProfileCombo();
             rebuildStakeholderCombo();
             rebuildMaestro();
+
+            // Initialize agentic infrastructure
+            OrganizationContext orgCtx = contextController.getOrganizationContext();
+            changeLog = new ContextChangeLog();
+            reconciliationService = new ReconciliationService(orgCtx, changeLog);
+            dailyUpdateFn = new DailyContextUpdateFunction(orgCtx, reconciliationService);
+
+            // Initialize structured data stores
+            InitiativeStore initiativeStore = new InitiativeStore();
+            RelationshipStore relationshipStore = new RelationshipStore();
+            OperationalFeedStore feedStore = new OperationalFeedStore();
+            WorkflowStore workflowStore = new WorkflowStore();
+
+            // Build task registry with built-in tasks
+            AgenticTaskRegistry taskRegistry = new AgenticTaskRegistry();
+            taskRegistry.register(new StartYourDayTask(feedStore));
+            taskRegistry.register(new OutboundMessagesTask(feedStore, relationshipStore));
+            taskRegistry.register(new ContextRefreshTask(dailyUpdateFn));
+            taskRegistry.register(new MeetingPrepTask(feedStore, relationshipStore));
+            taskRegistry.register(new InitiativeReviewTask(initiativeStore));
+            taskRegistry.register(new WeeklyReportTask());
+            taskRegistry.register(new StakeholderBriefingTask());
+
+            // Register user-defined workflows
+            for (WorkflowDefinition wd : workflowStore.getAll()) {
+                if (wd.isEnabled()) taskRegistry.register(new UserWorkflowTask(wd));
+            }
+
+            // Recommendation engine
+            RecommendationEngine recommendationEngine = new RecommendationEngine(orgCtx, feedStore, changeLog);
+
+            agenticPanel = new AgenticRoutinesPanel(orgCtx, reconciliationService, changeLog,
+                    config, taskRegistry, feedStore, workflowStore, recommendationEngine);
+
+            // Replace placeholder with real agentic panel
+            viewContainer.remove(viewContainer.getComponentCount() - 1);
+            viewContainer.add(agenticPanel, VIEW_AGENTIC);
+            viewContainer.revalidate();
+
             statusLabel.setText("Loaded profile set: " + activeProfileSet.getName());
         } catch (Exception e) {
             JOptionPane.showMessageDialog(this,

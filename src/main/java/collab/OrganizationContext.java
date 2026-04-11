@@ -9,41 +9,83 @@ package collab;
 // deadlines, risks) so every AI output is grounded in current
 // organizational reality.
 //
-// KEY DESIGN DECISION:
-// This is a SHARED context block — all buttons read from it and
-// the "Refresh Organization Context" flow updates it. It persists
-// to org_context.json alongside buttons.json.
+// KEY DESIGN DECISIONS:
+// - This is a SHARED context block — all buttons read from it.
+// - Each field is wrapped in ContextEntry<String> for metadata
+//   (freshness, source, confidence, approval status).
+// - Backward-compatible: load() detects old format (plain strings)
+//   and auto-migrates to ContextEntry wrappers.
+// - External API (getters/setters) still uses plain Strings so
+//   existing callers (ContextControlDialog, PromptBuilder) work
+//   unchanged.
 // ============================================================
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
+import com.google.gson.*;
+import com.google.gson.reflect.TypeToken;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.*;
 
 public class OrganizationContext {
 
     private static final String FILE_NAME = "org_context.json";
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    // --- Organization Context Fields ---
-    private String lastUpdated = "";
-    private String whatChangedSinceLastUpdate = "";
-    private String currentTermDateRange = "";
-    private String topPriorities = "";
-    private String activeInitiativesAndStatus = "";
-    private String upcomingDeadlinesAndEvents = "";
-    private String currentMetrics = "";
-    private String officerRosterAndOwnership = "";
-    private String keyPartnersStakeholders = "";
-    private String currentBlockersRisks = "";
-    private String pendingDecisions = "";
-    private String preferredToneStyle = "";
+    // --- Default TTLs per field category ---
+    private static final Duration TTL_STRATEGIC   = Duration.ofDays(14);
+    private static final Duration TTL_OPERATIONAL  = Duration.ofDays(7);
+    private static final Duration TTL_URGENT       = Duration.ofDays(3);
+    private static final Duration TTL_STABLE       = Duration.ofDays(30);
 
-    // --- Universal Intake Fields ---
+    private static final Map<String, Duration> FIELD_TTLS = Map.ofEntries(
+        Map.entry("lastUpdated",                TTL_OPERATIONAL),
+        Map.entry("whatChangedSinceLastUpdate",  TTL_URGENT),
+        Map.entry("currentTermDateRange",        TTL_STABLE),
+        Map.entry("topPriorities",               TTL_STRATEGIC),
+        Map.entry("activeInitiativesAndStatus",  TTL_OPERATIONAL),
+        Map.entry("upcomingDeadlinesAndEvents",  TTL_URGENT),
+        Map.entry("currentMetrics",              TTL_OPERATIONAL),
+        Map.entry("officerRosterAndOwnership",   TTL_STABLE),
+        Map.entry("keyPartnersStakeholders",     TTL_STRATEGIC),
+        Map.entry("currentBlockersRisks",        TTL_URGENT),
+        Map.entry("pendingDecisions",            TTL_URGENT),
+        Map.entry("preferredToneStyle",          TTL_STABLE)
+    );
+
+    // Human-readable labels for each field
+    private static final Map<String, String> FIELD_LABELS = Map.ofEntries(
+        Map.entry("lastUpdated",                "Last Updated"),
+        Map.entry("whatChangedSinceLastUpdate",  "What Changed Since Last Update"),
+        Map.entry("currentTermDateRange",        "Current Term / Date Range"),
+        Map.entry("topPriorities",               "Top Priorities"),
+        Map.entry("activeInitiativesAndStatus",  "Active Initiatives and Status"),
+        Map.entry("upcomingDeadlinesAndEvents",  "Upcoming Deadlines and Events"),
+        Map.entry("currentMetrics",              "Current Metrics"),
+        Map.entry("officerRosterAndOwnership",   "Officer Roster and Ownership"),
+        Map.entry("keyPartnersStakeholders",     "Key Partners / Stakeholders"),
+        Map.entry("currentBlockersRisks",        "Current Blockers / Risks"),
+        Map.entry("pendingDecisions",            "Pending Decisions"),
+        Map.entry("preferredToneStyle",          "Preferred Tone / Style")
+    );
+
+    // --- Organization Context Fields (now metadata-wrapped) ---
+    private ContextEntry<String> lastUpdated                = new ContextEntry<>("");
+    private ContextEntry<String> whatChangedSinceLastUpdate  = new ContextEntry<>("");
+    private ContextEntry<String> currentTermDateRange        = new ContextEntry<>("");
+    private ContextEntry<String> topPriorities               = new ContextEntry<>("");
+    private ContextEntry<String> activeInitiativesAndStatus  = new ContextEntry<>("");
+    private ContextEntry<String> upcomingDeadlinesAndEvents  = new ContextEntry<>("");
+    private ContextEntry<String> currentMetrics              = new ContextEntry<>("");
+    private ContextEntry<String> officerRosterAndOwnership   = new ContextEntry<>("");
+    private ContextEntry<String> keyPartnersStakeholders     = new ContextEntry<>("");
+    private ContextEntry<String> currentBlockersRisks        = new ContextEntry<>("");
+    private ContextEntry<String> pendingDecisions            = new ContextEntry<>("");
+    private ContextEntry<String> preferredToneStyle          = new ContextEntry<>("");
+
+    // --- Universal Intake Fields (kept as plain strings — low churn, not context-managed) ---
     private String defaultAudience = "";
     private String defaultGoal = "";
     private String defaultContext = "";
@@ -58,19 +100,20 @@ public class OrganizationContext {
     // --- Member/Officer Profiles ---
     private List<MemberProfile> memberProfiles = new ArrayList<>();
 
-    // Getters
-    public String getLastUpdated()                  { return lastUpdated; }
-    public String getWhatChangedSinceLastUpdate()   { return whatChangedSinceLastUpdate; }
-    public String getCurrentTermDateRange()         { return currentTermDateRange; }
-    public String getTopPriorities()                { return topPriorities; }
-    public String getActiveInitiativesAndStatus()   { return activeInitiativesAndStatus; }
-    public String getUpcomingDeadlinesAndEvents()   { return upcomingDeadlinesAndEvents; }
-    public String getCurrentMetrics()               { return currentMetrics; }
-    public String getOfficerRosterAndOwnership()    { return officerRosterAndOwnership; }
-    public String getKeyPartnersStakeholders()      { return keyPartnersStakeholders; }
-    public String getCurrentBlockersRisks()         { return currentBlockersRisks; }
-    public String getPendingDecisions()             { return pendingDecisions; }
-    public String getPreferredToneStyle()           { return preferredToneStyle; }
+    // ===================== Convenience getters (return plain String) =====================
+
+    public String getLastUpdated()                  { return val(lastUpdated); }
+    public String getWhatChangedSinceLastUpdate()   { return val(whatChangedSinceLastUpdate); }
+    public String getCurrentTermDateRange()         { return val(currentTermDateRange); }
+    public String getTopPriorities()                { return val(topPriorities); }
+    public String getActiveInitiativesAndStatus()   { return val(activeInitiativesAndStatus); }
+    public String getUpcomingDeadlinesAndEvents()   { return val(upcomingDeadlinesAndEvents); }
+    public String getCurrentMetrics()               { return val(currentMetrics); }
+    public String getOfficerRosterAndOwnership()    { return val(officerRosterAndOwnership); }
+    public String getKeyPartnersStakeholders()      { return val(keyPartnersStakeholders); }
+    public String getCurrentBlockersRisks()         { return val(currentBlockersRisks); }
+    public String getPendingDecisions()             { return val(pendingDecisions); }
+    public String getPreferredToneStyle()           { return val(preferredToneStyle); }
     public String getDefaultAudience()              { return defaultAudience; }
     public String getDefaultGoal()                  { return defaultGoal; }
     public String getDefaultContext()               { return defaultContext; }
@@ -83,19 +126,20 @@ public class OrganizationContext {
     public String getDefaultOutputChannel()         { return defaultOutputChannel; }
     public List<MemberProfile> getMemberProfiles()  { return memberProfiles; }
 
-    // Setters
-    public void setLastUpdated(String v)                  { this.lastUpdated = v; }
-    public void setWhatChangedSinceLastUpdate(String v)   { this.whatChangedSinceLastUpdate = v; }
-    public void setCurrentTermDateRange(String v)         { this.currentTermDateRange = v; }
-    public void setTopPriorities(String v)                { this.topPriorities = v; }
-    public void setActiveInitiativesAndStatus(String v)   { this.activeInitiativesAndStatus = v; }
-    public void setUpcomingDeadlinesAndEvents(String v)   { this.upcomingDeadlinesAndEvents = v; }
-    public void setCurrentMetrics(String v)               { this.currentMetrics = v; }
-    public void setOfficerRosterAndOwnership(String v)    { this.officerRosterAndOwnership = v; }
-    public void setKeyPartnersStakeholders(String v)      { this.keyPartnersStakeholders = v; }
-    public void setCurrentBlockersRisks(String v)         { this.currentBlockersRisks = v; }
-    public void setPendingDecisions(String v)             { this.pendingDecisions = v; }
-    public void setPreferredToneStyle(String v)           { this.preferredToneStyle = v; }
+    // ===================== Convenience setters (accept plain String, mark as user_edit) =====================
+
+    public void setLastUpdated(String v)                  { setField(lastUpdated, v, "user_edit"); }
+    public void setWhatChangedSinceLastUpdate(String v)   { setField(whatChangedSinceLastUpdate, v, "user_edit"); }
+    public void setCurrentTermDateRange(String v)         { setField(currentTermDateRange, v, "user_edit"); }
+    public void setTopPriorities(String v)                { setField(topPriorities, v, "user_edit"); }
+    public void setActiveInitiativesAndStatus(String v)   { setField(activeInitiativesAndStatus, v, "user_edit"); }
+    public void setUpcomingDeadlinesAndEvents(String v)   { setField(upcomingDeadlinesAndEvents, v, "user_edit"); }
+    public void setCurrentMetrics(String v)               { setField(currentMetrics, v, "user_edit"); }
+    public void setOfficerRosterAndOwnership(String v)    { setField(officerRosterAndOwnership, v, "user_edit"); }
+    public void setKeyPartnersStakeholders(String v)      { setField(keyPartnersStakeholders, v, "user_edit"); }
+    public void setCurrentBlockersRisks(String v)         { setField(currentBlockersRisks, v, "user_edit"); }
+    public void setPendingDecisions(String v)             { setField(pendingDecisions, v, "user_edit"); }
+    public void setPreferredToneStyle(String v)           { setField(preferredToneStyle, v, "user_edit"); }
     public void setDefaultAudience(String v)              { this.defaultAudience = v; }
     public void setDefaultGoal(String v)                  { this.defaultGoal = v; }
     public void setDefaultContext(String v)               { this.defaultContext = v; }
@@ -108,6 +152,76 @@ public class OrganizationContext {
     public void setDefaultOutputChannel(String v)         { this.defaultOutputChannel = v; }
     public void setMemberProfiles(List<MemberProfile> v)  { this.memberProfiles = v != null ? v : new ArrayList<>(); }
 
+    // ===================== ContextEntry accessors (for agentic/reconciliation layer) =====================
+
+    /** Returns the raw ContextEntry for a field by name. */
+    public ContextEntry<String> getEntry(String fieldName) {
+        return switch (fieldName) {
+            case "lastUpdated"               -> lastUpdated;
+            case "whatChangedSinceLastUpdate" -> whatChangedSinceLastUpdate;
+            case "currentTermDateRange"       -> currentTermDateRange;
+            case "topPriorities"             -> topPriorities;
+            case "activeInitiativesAndStatus" -> activeInitiativesAndStatus;
+            case "upcomingDeadlinesAndEvents" -> upcomingDeadlinesAndEvents;
+            case "currentMetrics"            -> currentMetrics;
+            case "officerRosterAndOwnership"  -> officerRosterAndOwnership;
+            case "keyPartnersStakeholders"   -> keyPartnersStakeholders;
+            case "currentBlockersRisks"      -> currentBlockersRisks;
+            case "pendingDecisions"          -> pendingDecisions;
+            case "preferredToneStyle"        -> preferredToneStyle;
+            default -> null;
+        };
+    }
+
+    /** Returns all context field names (the 12 metadata-wrapped fields). */
+    public static List<String> getFieldNames() {
+        return List.of(
+            "lastUpdated", "whatChangedSinceLastUpdate", "currentTermDateRange",
+            "topPriorities", "activeInitiativesAndStatus", "upcomingDeadlinesAndEvents",
+            "currentMetrics", "officerRosterAndOwnership", "keyPartnersStakeholders",
+            "currentBlockersRisks", "pendingDecisions", "preferredToneStyle"
+        );
+    }
+
+    /** Returns the human-readable label for a field name. */
+    public static String getFieldLabel(String fieldName) {
+        return FIELD_LABELS.getOrDefault(fieldName, fieldName);
+    }
+
+    /** Returns the configured TTL for a field. */
+    public static Duration getFieldTtl(String fieldName) {
+        return FIELD_TTLS.getOrDefault(fieldName, TTL_OPERATIONAL);
+    }
+
+    /** Computes freshness for a specific field. */
+    public Freshness getFieldFreshness(String fieldName) {
+        ContextEntry<String> entry = getEntry(fieldName);
+        if (entry == null) return Freshness.NEEDS_CONFIRMATION;
+        return entry.computeFreshness(getFieldTtl(fieldName));
+    }
+
+    /** Returns a freshness report: fieldName → Freshness for all fields. */
+    public Map<String, Freshness> getFreshnessReport() {
+        Map<String, Freshness> report = new LinkedHashMap<>();
+        for (String name : getFieldNames()) {
+            report.put(name, getFieldFreshness(name));
+        }
+        return report;
+    }
+
+    /** Updates a field programmatically with source/confidence metadata. */
+    public void updateField(String fieldName, String value, String source, double confidence, ContextStatus status) {
+        ContextEntry<String> entry = getEntry(fieldName);
+        if (entry != null) {
+            entry.setValue(value);
+            entry.setSource(source);
+            entry.setConfidence(confidence);
+            entry.setStatus(status);
+        }
+    }
+
+    // ===================== Member profiles =====================
+
     public void addMemberProfile(MemberProfile p) {
         if (memberProfiles == null) memberProfiles = new ArrayList<>();
         memberProfiles.add(p);
@@ -119,24 +233,23 @@ public class OrganizationContext {
         }
     }
 
-    /**
-     * Builds the organization context block appended to every task prompt.
-     */
+    // ===================== Prompt block builder =====================
+
     public String buildContextBlock() {
         StringBuilder sb = new StringBuilder();
         sb.append("=== ORGANIZATION CONTEXT ===\n");
-        appendField(sb, "Last Updated", lastUpdated);
-        appendField(sb, "What Changed Since Last Update", whatChangedSinceLastUpdate);
-        appendField(sb, "Current Term / Date Range", currentTermDateRange);
-        appendField(sb, "Top Priorities", topPriorities);
-        appendField(sb, "Active Initiatives and Status", activeInitiativesAndStatus);
-        appendField(sb, "Upcoming Deadlines and Events", upcomingDeadlinesAndEvents);
-        appendField(sb, "Current Metrics", currentMetrics);
-        appendField(sb, "Officer Roster and Ownership", officerRosterAndOwnership);
-        appendField(sb, "Key Partners / Stakeholders", keyPartnersStakeholders);
-        appendField(sb, "Current Blockers / Risks", currentBlockersRisks);
-        appendField(sb, "Pending Decisions", pendingDecisions);
-        appendField(sb, "Preferred Tone / Style", preferredToneStyle);
+        appendField(sb, "Last Updated", getLastUpdated());
+        appendField(sb, "What Changed Since Last Update", getWhatChangedSinceLastUpdate());
+        appendField(sb, "Current Term / Date Range", getCurrentTermDateRange());
+        appendField(sb, "Top Priorities", getTopPriorities());
+        appendField(sb, "Active Initiatives and Status", getActiveInitiativesAndStatus());
+        appendField(sb, "Upcoming Deadlines and Events", getUpcomingDeadlinesAndEvents());
+        appendField(sb, "Current Metrics", getCurrentMetrics());
+        appendField(sb, "Officer Roster and Ownership", getOfficerRosterAndOwnership());
+        appendField(sb, "Key Partners / Stakeholders", getKeyPartnersStakeholders());
+        appendField(sb, "Current Blockers / Risks", getCurrentBlockersRisks());
+        appendField(sb, "Pending Decisions", getPendingDecisions());
+        appendField(sb, "Preferred Tone / Style", getPreferredToneStyle());
 
         if (memberProfiles != null && !memberProfiles.isEmpty()) {
             sb.append("\n--- Member/Officer Profiles ---\n");
@@ -173,7 +286,9 @@ public class OrganizationContext {
         }
     }
 
-    // --- Persistence ---
+    // ===================== Persistence with backward-compatible migration =====================
+
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     public static OrganizationContext load() {
         return load(Path.of(FILE_NAME));
@@ -185,12 +300,105 @@ public class OrganizationContext {
         }
         try {
             String json = Files.readString(path);
-            OrganizationContext ctx = GSON.fromJson(json, OrganizationContext.class);
-            return ctx != null ? ctx : new OrganizationContext();
+            return deserialize(json);
         } catch (IOException e) {
             System.err.println("[OrganizationContext] Failed to load: " + e.getMessage());
             return new OrganizationContext();
         }
+    }
+
+    /**
+     * Deserializes from JSON, detecting old format (plain strings) vs new format (ContextEntry objects).
+     * Old format: { "topPriorities": "some text", ... }
+     * New format: { "topPriorities": { "value": "some text", "lastUpdated": "...", ... }, ... }
+     */
+    static OrganizationContext deserialize(String json) {
+        JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+
+        // Detect format by checking if a known field is a string or an object
+        boolean isOldFormat = false;
+        if (root.has("topPriorities")) {
+            JsonElement el = root.get("topPriorities");
+            isOldFormat = el.isJsonPrimitive();
+        } else if (root.has("lastUpdated")) {
+            JsonElement el = root.get("lastUpdated");
+            isOldFormat = el.isJsonPrimitive();
+        }
+
+        if (isOldFormat) {
+            return migrateFromOldFormat(root);
+        } else {
+            OrganizationContext ctx = GSON.fromJson(root, OrganizationContext.class);
+            if (ctx == null) ctx = new OrganizationContext();
+            ctx.ensureNonNull();
+            return ctx;
+        }
+    }
+
+    private static OrganizationContext migrateFromOldFormat(JsonObject root) {
+        OrganizationContext ctx = new OrganizationContext();
+
+        ctx.lastUpdated                = migrateField(root, "lastUpdated");
+        ctx.whatChangedSinceLastUpdate  = migrateField(root, "whatChangedSinceLastUpdate");
+        ctx.currentTermDateRange        = migrateField(root, "currentTermDateRange");
+        ctx.topPriorities               = migrateField(root, "topPriorities");
+        ctx.activeInitiativesAndStatus  = migrateField(root, "activeInitiativesAndStatus");
+        ctx.upcomingDeadlinesAndEvents  = migrateField(root, "upcomingDeadlinesAndEvents");
+        ctx.currentMetrics              = migrateField(root, "currentMetrics");
+        ctx.officerRosterAndOwnership   = migrateField(root, "officerRosterAndOwnership");
+        ctx.keyPartnersStakeholders     = migrateField(root, "keyPartnersStakeholders");
+        ctx.currentBlockersRisks        = migrateField(root, "currentBlockersRisks");
+        ctx.pendingDecisions            = migrateField(root, "pendingDecisions");
+        ctx.preferredToneStyle          = migrateField(root, "preferredToneStyle");
+
+        // Migrate plain string fields
+        ctx.defaultAudience              = getString(root, "defaultAudience");
+        ctx.defaultGoal                  = getString(root, "defaultGoal");
+        ctx.defaultContext               = getString(root, "defaultContext");
+        ctx.defaultDesiredOutcome        = getString(root, "defaultDesiredOutcome");
+        ctx.defaultDeadline              = getString(root, "defaultDeadline");
+        ctx.defaultTone                  = getString(root, "defaultTone");
+        ctx.defaultLength                = getString(root, "defaultLength");
+        ctx.defaultMustIncludeDetails    = getString(root, "defaultMustIncludeDetails");
+        ctx.defaultAvoidSensitivityNotes = getString(root, "defaultAvoidSensitivityNotes");
+        ctx.defaultOutputChannel         = getString(root, "defaultOutputChannel");
+
+        // Migrate member profiles
+        if (root.has("memberProfiles") && root.get("memberProfiles").isJsonArray()) {
+            ctx.memberProfiles = GSON.fromJson(root.get("memberProfiles"),
+                    new TypeToken<List<MemberProfile>>(){}.getType());
+        }
+
+        System.out.println("[OrganizationContext] Migrated from old format to ContextEntry format.");
+        return ctx;
+    }
+
+    private static ContextEntry<String> migrateField(JsonObject root, String fieldName) {
+        String value = getString(root, fieldName);
+        return ContextEntry.migrate(value);
+    }
+
+    private static String getString(JsonObject root, String key) {
+        if (root.has(key) && root.get(key).isJsonPrimitive()) {
+            return root.get(key).getAsString();
+        }
+        return "";
+    }
+
+    private void ensureNonNull() {
+        if (lastUpdated == null) lastUpdated = new ContextEntry<>("");
+        if (whatChangedSinceLastUpdate == null) whatChangedSinceLastUpdate = new ContextEntry<>("");
+        if (currentTermDateRange == null) currentTermDateRange = new ContextEntry<>("");
+        if (topPriorities == null) topPriorities = new ContextEntry<>("");
+        if (activeInitiativesAndStatus == null) activeInitiativesAndStatus = new ContextEntry<>("");
+        if (upcomingDeadlinesAndEvents == null) upcomingDeadlinesAndEvents = new ContextEntry<>("");
+        if (currentMetrics == null) currentMetrics = new ContextEntry<>("");
+        if (officerRosterAndOwnership == null) officerRosterAndOwnership = new ContextEntry<>("");
+        if (keyPartnersStakeholders == null) keyPartnersStakeholders = new ContextEntry<>("");
+        if (currentBlockersRisks == null) currentBlockersRisks = new ContextEntry<>("");
+        if (pendingDecisions == null) pendingDecisions = new ContextEntry<>("");
+        if (preferredToneStyle == null) preferredToneStyle = new ContextEntry<>("");
+        if (memberProfiles == null) memberProfiles = new ArrayList<>();
     }
 
     public void save() {
@@ -205,9 +413,24 @@ public class OrganizationContext {
         }
     }
 
-    /**
-     * A member/officer profile entry within the organization context.
-     */
+    // ===================== Helpers =====================
+
+    private static String val(ContextEntry<String> entry) {
+        if (entry == null || entry.getValue() == null) return "";
+        return entry.getValue();
+    }
+
+    private static void setField(ContextEntry<String> entry, String value, String source) {
+        if (entry != null) {
+            entry.setValue(value != null ? value : "");
+            entry.setSource(source);
+            entry.setConfidence(1.0);
+            entry.setStatus(ContextStatus.APPROVED);
+        }
+    }
+
+    // ===================== MemberProfile inner class =====================
+
     public static class MemberProfile {
         private String name;
         private String role;

@@ -29,18 +29,8 @@ package collab;
 public class PromptBuilder {
 
     // The team context layer — shared by all agents.
-    // Tells every model what kind of team they're part of.
-	static final String DEFAULT_TEAM_CONTEXT =
-			   "=== COLLABORATION CONTEXT ===\n"
-				          + "You are one of three AI collaborators helping a team of four university students\n"
-				          + "build an AI collaboration platform as their final project (3-week deadline).\n"
-				          + "The panel consists of Claude (Anthropic), GPT (OpenAI), and Gemini (Google).\n"
-				          + "You are EQUAL PARTNERS no one agent leads or outranks the others.\n"
-				          + "Your job is to think together, challenge each other constructively,\n"
-				          + "and help the students build the best possible solution.\n"
-				          + "You will first respond independently, then react to the other agents' positions,\n"
-				          + "and finally a synthesis report will be produced.\n"
-				          + "Stay true to your assigned perspective below, but remain collaborative.\n\n";
+    // Set by the user during first-launch setup. Empty until configured.
+    static final String DEFAULT_TEAM_CONTEXT = "";
 
     // ConversationContext provides history from previous cycles.
     // Injected via constructor so this class doesn't depend on global state.

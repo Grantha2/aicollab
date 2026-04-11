@@ -84,66 +84,11 @@ public class StakeholderProfile {
     }
 
     // ============================================================
-    // getDefaults() — Returns the four student team member profiles.
-    //
-    // These are the same profiles that were hardcoded in the original
-    // Main.java as STAKEHOLDER_PROFILES[][]. Now they're proper
-    // objects with named fields instead of magic array indices.
-    //
-    // UPDATE THESE as the project evolves and people take on tasks.
-    //
-    // RETURNS: a List of 4 StakeholderProfiles in menu display order.
+    // getDefaults() — Returns an empty list. Stakeholder profiles are
+    // now provided by the user during first-launch setup and stored
+    // in the profile system for subsequent launches.
     // ============================================================
     public static List<StakeholderProfile> getDefaults() {
-        return List.of(
-            new StakeholderProfile(
-                "Grant",
-                "Project Lead & Prompter-in-Chief",
-                "Architecture, AI integration, prompt engineering",
-                "Xavier, Lisiana, Arizbeth",
-                "Owns overall design and orchestration logic. Drives the prompt strategy. "
-                    + "Primary liaison with AI collaborators. Sets priorities and unblocks teammates.",
-                "Working platform, clean architecture, team understanding of codebase, final presentation quality",
-                "Started the project and built v0.1-v0.3 solo. Strongest current understanding "
-                    + "of the codebase. Rusty on Java but learning fast through building. "
-                    + "Thinks strategically about the product vision."
-            ),
-            new StakeholderProfile(
-                "Xavier",
-                "Team Member (role TBD)",
-                "To be assigned",
-                "Grant, Lisiana, Arizbeth",
-                "Currently onboarding to the project. Needs to clone the repo, run the platform "
-                    + "locally, and read through the code with comments. Will be assigned a "
-                    + "component after Week 1 orientation.",
-                "Code contributions, understanding of their assigned component, ability to explain their work",
-                "Currently not active on the project. Joining from break. Skill level and "
-                    + "interests to be assessed during onboarding."
-            ),
-            new StakeholderProfile(
-                "Lisiana",
-                "Team Member (role TBD)",
-                "To be assigned",
-                "Grant, Xavier, Arizbeth",
-                "Currently onboarding to the project. Needs to clone the repo, run the platform "
-                    + "locally, and read through the code with comments. Will be assigned a "
-                    + "component after Week 1 orientation.",
-                "Code contributions, understanding of their assigned component, ability to explain their work",
-                "Currently not active on the project. Joining from break. Skill level and "
-                    + "interests to be assessed during onboarding."
-            ),
-            new StakeholderProfile(
-                "Arizbeth",
-                "Team Member (role TBD)",
-                "To be assigned",
-                "Grant, Xavier, Lisiana",
-                "Currently onboarding to the project. Needs to clone the repo, run the platform "
-                    + "locally, and read through the code with comments. Will be assigned a "
-                    + "component after Week 1 orientation.",
-                "Code contributions, understanding of their assigned component, ability to explain their work",
-                "Currently not active on the project. Joining from break. Skill level and "
-                    + "interests to be assessed during onboarding."
-            )
-        );
+        return List.of();
     }
 }
