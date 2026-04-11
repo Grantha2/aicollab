@@ -111,9 +111,10 @@ public class AwsContextSource implements ContextSource {
 
         try {
             String body = GSON.toJson(context);
+            String encodedOrg = URLEncoder.encode(orgId, StandardCharsets.UTF_8);
 
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/context"))
+                    .uri(URI.create(baseUrl + "/context?orgId=" + encodedOrg))
                     .header("x-api-key", apiKey)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))

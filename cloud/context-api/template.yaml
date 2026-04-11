@@ -1,0 +1,89 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  aicollab context-api — HTTP API + Lambda that persists the shared
+  OrganizationContext for an organization in MongoDB. Fronted by a
+  usage-plan API key so only clients holding the shared x-api-key
+  header can read/write.
+
+Parameters:
+  MongoDbUri:
+    Type: String
+    NoEcho: true
+    Description: >
+      MongoDB connection string (e.g. mongodb+srv://user:pass@cluster/).
+      Stored in Lambda env vars — rotate via `sam deploy` when the
+      Atlas credentials change.
+
+  DbName:
+    Type: String
+    Default: aicollab
+    Description: Mongo database name that holds the org_context collection.
+
+  SharedApiKey:
+    Type: String
+    NoEcho: true
+    Description: >
+      Shared API key the Java client sends as x-api-key. This is
+      v1-grade trusted-team auth. First thing to harden post-POC
+      (see cloud/context-api/README.md for the hardening path).
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 15
+    MemorySize: 256
+    Architectures:
+      - arm64
+
+Resources:
+
+  ContextApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      # API Gateway HTTP API with no auth block here — the handler
+      # re-checks x-api-key defensively against the SharedApiKey
+      # env var, which matches what the Java client already sends.
+      CorsConfiguration:
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - x-api-key
+        AllowOrigins:
+          - "*"
+
+  ContextFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: index.handler
+      Description: GET/POST /context — shared OrganizationContext persistence.
+      Environment:
+        Variables:
+          MONGODB_URI: !Ref MongoDbUri
+          DB_NAME: !Ref DbName
+          API_KEY: !Ref SharedApiKey
+      Events:
+        GetContext:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ContextApi
+            Path: /context
+            Method: GET
+        PostContext:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ContextApi
+            Path: /context
+            Method: POST
+
+Outputs:
+  ContextApiUrl:
+    Description: Base URL to paste into aws.context.url in config.properties.
+    Value: !Sub "https://${ContextApi}.execute-api.${AWS::Region}.amazonaws.com"
+  ContextFunctionArn:
+    Description: ARN of the Lambda handler (useful for CloudWatch log grouping).
+    Value: !GetAtt ContextFunction.Arn

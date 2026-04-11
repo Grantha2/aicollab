@@ -37,3 +37,21 @@ debate.rounds=1
 # Max characters of conversation history to include in prompts
 # Prevents prompts from growing too large. ~4 chars per token.
 max.history.chars=24000
+
+# --- Cloud Context (AWS Lambda + MongoDB, optional) ---
+# Off by default. When enabled, the app reads and writes the shared
+# OrganizationContext through the context-api Lambda (see
+# cloud/context-api/) instead of the local org_context.json file.
+# All four values are required when aws.context.enabled=true.
+aws.context.enabled=false
+aws.context.url=https://abcd1234.execute-api.us-east-1.amazonaws.com
+aws.context.apiKey=YOUR_SHARED_CONTEXT_API_KEY
+aws.context.orgId=your-org-id
+
+# --- Managed Agents (Claude Managed Agents + Files API, optional) ---
+# When the key is set, tasks that extend AgenticModeTask (like the
+# Book Room POC) become available in the Agentic Routines tab.
+# Leave managed.agents.key blank to fall back to claude.key.
+managed.agents.url=https://api.anthropic.com
+managed.agents.key=
+managed.agents.model=claude-opus-4-6
