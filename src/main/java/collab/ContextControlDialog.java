@@ -19,6 +19,11 @@ public class ContextControlDialog extends JDialog {
     private final ConversationContext context;
     private final ProfileSet activeProfileSet;
     /**
+     * Editable Phase 2 / Phase 3 instruction blocks. Mutated in-place by
+     * the Prompt Templates tab; persistence is deferred to onTemplateSaved.
+     */
+    private final PromptTemplate activeTemplate;
+    /**
      * Invoked when the dialog mutates the active ProfileSet (team context
      * edits). MainGui uses this to persist the ProfileSet via ProfileLibrary
      * and rebuild Maestro so the changes take effect immediately.
@@ -29,16 +34,25 @@ public class ContextControlDialog extends JDialog {
      * doesn't need to know about ProfileLibrary or Maestro rebuilds.
      */
     private final Runnable onEditProfileRequested;
+    /**
+     * Invoked when the user saves edits to the Prompt Templates tab.
+     * MainGui persists via PromptTemplateLibrary and rebuilds Maestro.
+     */
+    private final Runnable onTemplateSaved;
 
     public ContextControlDialog(Frame owner, ContextController controller,
                                 ConversationContext context, ProfileSet activeProfileSet,
-                                Runnable onProfileSetSaved, Runnable onEditProfileRequested) {
+                                PromptTemplate activeTemplate,
+                                Runnable onProfileSetSaved, Runnable onEditProfileRequested,
+                                Runnable onTemplateSaved) {
         super(owner, "Context Control", true);
         this.controller = controller;
         this.context = context;
         this.activeProfileSet = activeProfileSet;
+        this.activeTemplate = activeTemplate;
         this.onProfileSetSaved = onProfileSetSaved;
         this.onEditProfileRequested = onEditProfileRequested;
+        this.onTemplateSaved = onTemplateSaved;
 
         setSize(700, 500);
         setLocationRelativeTo(owner);
@@ -48,6 +62,7 @@ public class ContextControlDialog extends JDialog {
         tabs.addTab("Organization", buildOrgContextTab());
         tabs.addTab("Task Context", buildTaskContextTab());
         tabs.addTab("History", buildHistoryTab());
+        tabs.addTab("Prompt Templates", buildPromptTemplatesTab());
         tabs.addTab("Prompt Preview", buildPreviewTab());
 
         add(tabs, BorderLayout.CENTER);
@@ -529,6 +544,30 @@ public class ContextControlDialog extends JDialog {
             } else {
                 sb.append("(disabled)\n");
             }
+            sb.append("\n");
+
+            // Current in-memory template text, so users can confirm how
+            // edits on the Prompt Templates tab will land in real prompts.
+            sb.append("=== PHASE 2 REACTION INSTRUCTIONS (in-memory) ===\n");
+            if (activeTemplate != null) {
+                sb.append("-- Preamble --\n");
+                sb.append(activeTemplate.getReactionPreamble()).append("\n");
+                sb.append("-- Task --\n");
+                sb.append(activeTemplate.getReactionTask()).append("\n");
+            } else {
+                sb.append("(no template loaded)\n");
+            }
+            sb.append("\n");
+
+            sb.append("=== PHASE 3 SYNTHESIS INSTRUCTIONS (in-memory) ===\n");
+            if (activeTemplate != null) {
+                sb.append("-- Preamble --\n");
+                sb.append(activeTemplate.getSynthesisPreamble()).append("\n");
+                sb.append("-- Task --\n");
+                sb.append(activeTemplate.getSynthesisTask()).append("\n");
+            } else {
+                sb.append("(no template loaded)\n");
+            }
 
             previewArea.setText(sb.toString());
             previewArea.setCaretPosition(0);
@@ -556,7 +595,117 @@ public class ContextControlDialog extends JDialog {
         // Re-open to reflect changes
         new ContextControlDialog(
                 (Frame) getOwner(), controller, context, activeProfileSet,
-                onProfileSetSaved, onEditProfileRequested
+                activeTemplate,
+                onProfileSetSaved, onEditProfileRequested, onTemplateSaved
         ).setVisible(true);
+    }
+
+    // ============================================================
+    // Prompt Templates tab — lets users edit the "instructions-only"
+    // portions of the Phase 2 reaction prompt and the Phase 3
+    // synthesis prompt. The surrounding data plumbing (original
+    // question, peer responses, phase markers) stays hardcoded.
+    // ============================================================
+    private JPanel buildPromptTemplatesTab() {
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        panel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+
+        if (activeTemplate == null) {
+            panel.add(new JLabel("Prompt templates are unavailable (no active template loaded)."),
+                    BorderLayout.CENTER);
+            return panel;
+        }
+
+        JLabel info = new JLabel(
+                "<html>Edit the instructional text injected into Phase 2 (reaction) "
+              + "and Phase 3 (synthesis) prompts. The original question, peer "
+              + "responses, and phase markers are added by the system and cannot "
+              + "be edited here.</html>");
+        panel.add(info, BorderLayout.NORTH);
+
+        // Four editable text areas, each with its own "Reset" button,
+        // organised as a vertical stack of titled sections.
+        JTextArea reactionPreambleArea = makeTemplateArea(activeTemplate.getReactionPreamble());
+        JTextArea reactionTaskArea = makeTemplateArea(activeTemplate.getReactionTask());
+        JTextArea synthesisPreambleArea = makeTemplateArea(activeTemplate.getSynthesisPreamble());
+        JTextArea synthesisTaskArea = makeTemplateArea(activeTemplate.getSynthesisTask());
+
+        JPanel sections = new JPanel();
+        sections.setLayout(new BoxLayout(sections, BoxLayout.Y_AXIS));
+        sections.add(buildTemplateSection(
+                "Phase 2 — Reaction Preamble",
+                "Appears just after \"You are <agent>. \" and before the peer responses.",
+                reactionPreambleArea,
+                PromptTemplate.DEFAULT_REACTION_PREAMBLE));
+        sections.add(buildTemplateSection(
+                "Phase 2 — Reaction Task",
+                "Appears after the peer responses. Drives how each agent reacts.",
+                reactionTaskArea,
+                PromptTemplate.DEFAULT_REACTION_TASK));
+        sections.add(buildTemplateSection(
+                "Phase 3 — Synthesis Preamble",
+                "Appears before the debate transcript. Panel composition and framing.",
+                synthesisPreambleArea,
+                PromptTemplate.DEFAULT_SYNTHESIS_PREAMBLE));
+        sections.add(buildTemplateSection(
+                "Phase 3 — Synthesis Task",
+                "Appears after the debate transcript. Drives the final report structure.",
+                synthesisTaskArea,
+                PromptTemplate.DEFAULT_SYNTHESIS_TASK));
+
+        panel.add(new JScrollPane(sections), BorderLayout.CENTER);
+
+        JPanel bottom = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JButton resetAllBtn = new JButton("Reset All to Defaults");
+        resetAllBtn.addActionListener(e -> {
+            reactionPreambleArea.setText(PromptTemplate.DEFAULT_REACTION_PREAMBLE);
+            reactionTaskArea.setText(PromptTemplate.DEFAULT_REACTION_TASK);
+            synthesisPreambleArea.setText(PromptTemplate.DEFAULT_SYNTHESIS_PREAMBLE);
+            synthesisTaskArea.setText(PromptTemplate.DEFAULT_SYNTHESIS_TASK);
+        });
+        JButton applyBtn = new JButton("Apply & Save");
+        applyBtn.setToolTipText("Saves templates to disk and rebuilds the debate engine with new prompts.");
+        applyBtn.addActionListener(e -> {
+            activeTemplate.setReactionPreamble(reactionPreambleArea.getText());
+            activeTemplate.setReactionTask(reactionTaskArea.getText());
+            activeTemplate.setSynthesisPreamble(synthesisPreambleArea.getText());
+            activeTemplate.setSynthesisTask(synthesisTaskArea.getText());
+            if (onTemplateSaved != null) {
+                onTemplateSaved.run();
+            }
+            JOptionPane.showMessageDialog(panel, "Prompt templates saved.",
+                    "Saved", JOptionPane.INFORMATION_MESSAGE);
+        });
+        bottom.add(resetAllBtn);
+        bottom.add(applyBtn);
+        panel.add(bottom, BorderLayout.SOUTH);
+
+        return panel;
+    }
+
+    private JTextArea makeTemplateArea(String initial) {
+        JTextArea area = new JTextArea(initial, 6, 50);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        return area;
+    }
+
+    private JPanel buildTemplateSection(String title, String hint,
+                                        JTextArea area, String defaultValue) {
+        JPanel section = new JPanel(new BorderLayout(4, 4));
+        section.setBorder(BorderFactory.createTitledBorder(title));
+
+        JLabel hintLabel = new JLabel("<html><i>" + hint + "</i></html>");
+        section.add(hintLabel, BorderLayout.NORTH);
+        section.add(new JScrollPane(area), BorderLayout.CENTER);
+
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        JButton resetBtn = new JButton("Reset to Default");
+        resetBtn.addActionListener(e -> area.setText(defaultValue));
+        buttons.add(resetBtn);
+        section.add(buttons, BorderLayout.SOUTH);
+
+        return section;
     }
 }

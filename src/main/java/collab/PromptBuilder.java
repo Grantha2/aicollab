@@ -38,6 +38,10 @@ public class PromptBuilder {
     private final String teamContext;
     private final ContextController controller;
 
+    // User-editable Phase 2 / Phase 3 instruction blocks. Null means
+    // "use baked-in defaults"; see effectiveTemplate() below.
+    private PromptTemplate template;
+
     // ============================================================
     // Constructor.
     //
@@ -57,6 +61,20 @@ public class PromptBuilder {
         this.context = context;
         this.teamContext = teamContext;
         this.controller = controller;
+    }
+
+    /**
+     * Provide an editable template. Pass null to fall back to defaults.
+     * Maestro (via MainGui.rebuildMaestro) calls this after construction
+     * so legacy callers that don't know about templates still get the
+     * original hardcoded behaviour.
+     */
+    public void setTemplate(PromptTemplate template) {
+        this.template = template;
+    }
+
+    private PromptTemplate effectiveTemplate() {
+        return template != null ? template : PromptTemplate.fromDefaults();
     }
 
     // Layer helpers that respect ContextController toggles
@@ -165,14 +183,14 @@ public class PromptBuilder {
         // Layer 2: Stakeholder context (remember who you're advising)
         sb.append(effectiveStakeholderBriefing(stakeholder));
 
-        // Layer 3: The cross-reaction task
+        // Layer 3: The cross-reaction task (instructions editable via PromptTemplate)
+        PromptTemplate tmpl = effectiveTemplate();
+
         sb.append("THE ORIGINAL QUESTION:\n");
         sb.append(userPrompt).append("\n\n");
 
-        sb.append("You are ").append(agent.getName());
-        sb.append(". You already provided your initial response.\n");
-        sb.append("Now, the other two panel members have also responded. ");
-        sb.append("Review their perspectives below, keeping YOUR assigned role in mind.\n\n");
+        sb.append("You are ").append(agent.getName()).append(". ");
+        sb.append(tmpl.getReactionPreamble());
 
         sb.append("--- ").append(peerAName).append("'s Response ---\n");
         sb.append(peerAResponse).append("\n\n");
@@ -180,12 +198,7 @@ public class PromptBuilder {
         sb.append("--- ").append(peerBName).append("'s Response ---\n");
         sb.append(peerBResponse).append("\n\n");
 
-        sb.append("React FROM YOUR ASSIGNED PERSPECTIVE. Specifically:\n");
-        sb.append("1. Where do you AGREE with the other panel members? Why?\n");
-        sb.append("2. Where do you DISAGREE? What did they get wrong from YOUR perspective?\n");
-        sb.append("3. What important points did they MISS given the stakeholder's role and KPIs?\n");
-        sb.append("4. Has seeing their responses changed or refined YOUR position?\n");
-        sb.append("\nBe specific. Reference their actual arguments, not vague generalities.");
+        sb.append(tmpl.getReactionTask());
 
         return sb.toString();
     }
@@ -201,15 +214,14 @@ public class PromptBuilder {
                                          String userPrompt,
                                          String peerAName, String peerAResponse,
                                          String peerBName, String peerBResponse) {
+        PromptTemplate tmpl = effectiveTemplate();
         StringBuilder sb = new StringBuilder();
 
         sb.append("THE ORIGINAL QUESTION:\n");
         sb.append(userPrompt).append("\n\n");
 
-        sb.append("You are ").append(agent.getName());
-        sb.append(". You already provided your initial response.\n");
-        sb.append("Now, the other two panel members have also responded. ");
-        sb.append("Review their perspectives below, keeping YOUR assigned role in mind.\n\n");
+        sb.append("You are ").append(agent.getName()).append(". ");
+        sb.append(tmpl.getReactionPreamble());
 
         sb.append("--- ").append(peerAName).append("'s Response ---\n");
         sb.append(peerAResponse).append("\n\n");
@@ -217,12 +229,7 @@ public class PromptBuilder {
         sb.append("--- ").append(peerBName).append("'s Response ---\n");
         sb.append(peerBResponse).append("\n\n");
 
-        sb.append("React FROM YOUR ASSIGNED PERSPECTIVE. Specifically:\n");
-        sb.append("1. Where do you AGREE with the other panel members? Why?\n");
-        sb.append("2. Where do you DISAGREE? What did they get wrong from YOUR perspective?\n");
-        sb.append("3. What important points did they MISS given the stakeholder's role and KPIs?\n");
-        sb.append("4. Has seeing their responses changed or refined YOUR position?\n");
-        sb.append("\nBe specific. Reference their actual arguments, not vague generalities.");
+        sb.append(tmpl.getReactionTask());
 
         return sb.toString();
     }
@@ -256,6 +263,7 @@ public class PromptBuilder {
                                        String claudeInitial, String gptInitial, String geminiInitial,
                                        String claudeReaction, String gptReaction, String geminiReaction) {
 
+        PromptTemplate tmpl = effectiveTemplate();
         StringBuilder sb = new StringBuilder();
 
         sb.append("You are the orchestrator of a multi-AI advisory panel.\n\n");
@@ -263,12 +271,8 @@ public class PromptBuilder {
         // Include stakeholder context so the synthesis is tailored
         sb.append(stakeholder.toBriefing());
 
-        sb.append("=== PANEL COMPOSITION ===\n");
-        sb.append("Claude: Chief Strategy & Risk Analyst\n");
-        sb.append("GPT: Innovation & Opportunity Analyst\n");
-        sb.append("Gemini: Technical Feasibility & Implementation Lead\n\n");
-//todo: make this variable
-        sb.append("The panel debated the following question from the stakeholder above.\n\n");
+        // Editable preamble: panel composition + "debated the following" line
+        sb.append(tmpl.getSynthesisPreamble());
 
         sb.append("=== ORIGINAL QUESTION ===\n");
         sb.append(userPrompt).append("\n\n");
@@ -283,28 +287,8 @@ public class PromptBuilder {
         sb.append("--- GPT's Reaction ---\n").append(gptReaction).append("\n\n");
         sb.append("--- Gemini's Reaction ---\n").append(geminiReaction).append("\n\n");
 
-        sb.append("=== YOUR TASK ===\n");
-        sb.append("Produce a SYNTHESIS REPORT with the following sections.\n");
-        sb.append("Tailor the report to the active stakeholder's role, KPIs, ");
-        sb.append("and decision authority.\n\n");
-
-        sb.append("1. AREAS OF AGREEMENT\n");
-        sb.append("   What conclusions do all three panel members converge on? ");
-        sb.append("These are the highest-confidence findings.\n\n");
-
-        sb.append("2. AREAS OF DISAGREEMENT\n");
-        sb.append("   Where do panel members conflict? Identify which ROLE ");
-        sb.append("(strategy vs innovation vs technical) drives each position.\n\n");
-
-        sb.append("3. KEY INSIGHTS\n");
-        sb.append("   What emerged from the cross-reaction that wasn't in ");
-        sb.append("the initial responses? What changed when perspectives collided?\n\n");
-
-        sb.append("4. RECOMMENDATION FOR THIS STAKEHOLDER\n");
-        sb.append("   Given the stakeholder's specific KPIs, authority, and role, ");
-        sb.append("what should THEY specifically do? What's actionable for THEM?\n\n");
-
-        sb.append("Be thorough but concise. Reference specific arguments from each panel member.");
+        // Editable task: "=== YOUR TASK ===" + four numbered sections
+        sb.append(tmpl.getSynthesisTask());
 
         return sb.toString();
     }
@@ -320,16 +304,13 @@ public class PromptBuilder {
                                               String userPrompt,
                                               String claudeInitial, String gptInitial, String geminiInitial,
                                               String claudeReaction, String gptReaction, String geminiReaction) {
+        PromptTemplate tmpl = effectiveTemplate();
         StringBuilder sb = new StringBuilder();
 
         sb.append("You are the orchestrator of a multi-AI advisory panel.\n\n");
 
-        sb.append("=== PANEL COMPOSITION ===\n");
-        sb.append("Claude: Chief Strategy & Risk Analyst\n");
-        sb.append("GPT: Innovation & Opportunity Analyst\n");
-        sb.append("Gemini: Technical Feasibility & Implementation Lead\n\n");
-
-        sb.append("The panel debated the following question from the stakeholder above.\n\n");
+        // Editable preamble: panel composition + "debated the following" line
+        sb.append(tmpl.getSynthesisPreamble());
 
         sb.append("=== ORIGINAL QUESTION ===\n");
         sb.append(userPrompt).append("\n\n");
@@ -344,28 +325,8 @@ public class PromptBuilder {
         sb.append("--- GPT's Reaction ---\n").append(gptReaction).append("\n\n");
         sb.append("--- Gemini's Reaction ---\n").append(geminiReaction).append("\n\n");
 
-        sb.append("=== YOUR TASK ===\n");
-        sb.append("Produce a SYNTHESIS REPORT with the following sections.\n");
-        sb.append("Tailor the report to the active stakeholder's role, KPIs, ");
-        sb.append("and decision authority.\n\n");
-
-        sb.append("1. AREAS OF AGREEMENT\n");
-        sb.append("   What conclusions do all three panel members converge on? ");
-        sb.append("These are the highest-confidence findings.\n\n");
-
-        sb.append("2. AREAS OF DISAGREEMENT\n");
-        sb.append("   Where do panel members conflict? Identify which ROLE ");
-        sb.append("(strategy vs innovation vs technical) drives each position.\n\n");
-
-        sb.append("3. KEY INSIGHTS\n");
-        sb.append("   What emerged from the cross-reaction that wasn't in ");
-        sb.append("the initial responses? What changed when perspectives collided?\n\n");
-
-        sb.append("4. RECOMMENDATION FOR THIS STAKEHOLDER\n");
-        sb.append("   Given the stakeholder's specific KPIs, authority, and role, ");
-        sb.append("what should THEY specifically do? What's actionable for THEM?\n\n");
-
-        sb.append("Be thorough but concise. Reference specific arguments from each panel member.");
+        // Editable task: "=== YOUR TASK ===" + four numbered sections
+        sb.append(tmpl.getSynthesisTask());
 
         return sb.toString();
     }

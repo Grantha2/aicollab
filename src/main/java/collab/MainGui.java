@@ -15,6 +15,8 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     private Config config;
     private ProfileLibrary profileLibrary;
     private ProfileSet activeProfileSet;
+    private PromptTemplateLibrary templateLibrary;
+    private PromptTemplate activeTemplate;
     private Maestro maestro;
     private ConversationContext conversationContext;
 
@@ -340,6 +342,12 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             List<String> names = profileLibrary.listAvailableSets();
             activeProfileSet = profileLibrary.loadSet(names.getFirst());
 
+            // Load (or create) the default prompt-instructions template so
+            // Phase 2 / Phase 3 prompts can be customised from the GUI.
+            templateLibrary = new PromptTemplateLibrary();
+            templateLibrary.ensureDefaultExists();
+            activeTemplate = templateLibrary.loadSet("default");
+
             // First-launch check: if profile has no agents or stakeholders, run setup wizard
             if (needsSetup(activeProfileSet)) {
                 FirstLaunchSetupDialog setupDialog = new FirstLaunchSetupDialog(this);
@@ -469,6 +477,7 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         conversationContext = new ConversationContext(config.getMaxHistoryChars());
         String effectiveTeamCtx = contextController.getEffectiveTeamContext(activeProfileSet.getTeamContext());
         PromptBuilder promptBuilder = new PromptBuilder(conversationContext, effectiveTeamCtx, contextController);
+        promptBuilder.setTemplate(activeTemplate);
         SessionStore sessionStore = SessionStore.createNewDefaultSession();
 
         maestro = new Maestro(
@@ -741,9 +750,20 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             }
         };
         Runnable onEditProfile = this::onCreateProfileSet;
+        Runnable onTemplateSaved = () -> {
+            try {
+                templateLibrary.saveSet(activeTemplate, "default");
+                rebuildMaestro();
+                statusLabel.setText("Saved prompt templates.");
+            } catch (Exception e) {
+                JOptionPane.showMessageDialog(this,
+                        "Unable to save prompt templates: " + e.getMessage(),
+                        "Template Save Error", JOptionPane.ERROR_MESSAGE);
+            }
+        };
         ContextControlDialog dialog = new ContextControlDialog(
                 this, contextController, conversationContext, activeProfileSet,
-                onProfileSaved, onEditProfile);
+                activeTemplate, onProfileSaved, onEditProfile, onTemplateSaved);
         dialog.setVisible(true);
     }
 
