@@ -1,5 +1,7 @@
 package collab;
 
+import com.formdev.flatlaf.FlatLightLaf;
+
 import javax.swing.*;
 import java.awt.*;
 import java.net.http.HttpClient;
@@ -1002,13 +1004,29 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     }
 
     public static void launch() {
-        try {
-            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-        } catch (Exception ignored) {
-        }
+        // FlatLaf is HiDPI-aware out of the box and paints crisp text on
+        // Windows fractional scales (125%, 150%) where the system LAF
+        // fuzzes out. setup() installs the LAF synchronously, so later
+        // UIManager.put() calls affect every component we create.
+        FlatLightLaf.setup();
+
+        // Bump the FlatLaf baseline font by +2pt so labels/buttons are
+        // comfortably readable on 125% laptop displays without touching
+        // any per-component font overrides scattered through the code.
+        bumpDefaultFont(2);
+
         SwingUtilities.invokeLater(() -> {
             MainGui frame = new MainGui();
             frame.setVisible(true);
         });
+    }
+
+    private static void bumpDefaultFont(int deltaPt) {
+        Font base = UIManager.getFont("defaultFont");
+        if (base == null) {
+            base = new Font(Font.SANS_SERIF, Font.PLAIN, 13);
+        }
+        UIManager.put("defaultFont",
+                base.deriveFont((float) (base.getSize() + deltaPt)));
     }
 }

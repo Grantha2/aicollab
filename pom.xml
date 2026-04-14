@@ -61,6 +61,21 @@
             <artifactId>gson</artifactId>
             <version>2.11.0</version>
         </dependency>
+
+        <!--
+            FlatLaf — modern Swing Look-and-Feel.
+
+            WHY IT'S HERE:
+            The built-in Windows/Metal LAFs render fuzzily on fractional
+            HiDPI scales (125%, 150%) and ship with tiny default fonts.
+            FlatLaf is purpose-built for HiDPI Swing, paints crisp text
+            on every scale factor, and has cleaner, more modern visuals.
+        -->
+        <dependency>
+            <groupId>com.formdev</groupId>
+            <artifactId>flatlaf</artifactId>
+            <version>3.5.1</version>
+        </dependency>
     </dependencies>
 
     <build>
