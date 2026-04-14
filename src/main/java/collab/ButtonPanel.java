@@ -154,8 +154,12 @@ public class ButtonPanel extends JPanel {
                 BorderFactory.createEmptyBorder(3, 6, 3, 6)));
         card.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 
-        // Icon
-        ImageIcon icon = iconLoader.loadIcon(btn.getIconPath());
+        // Icon — variable typed as Icon so we can fall back to the
+        // vector-painted LetterBadgeIcon (not an ImageIcon) when no
+        // bitmap asset exists. LetterBadgeIcon stays crisp at any
+        // display scale because it paints onto the destination
+        // Graphics2D rather than being pre-rasterized.
+        Icon icon = iconLoader.loadIcon(btn.getIconPath());
         if (icon == null) {
             icon = IconLoader.createFallbackIcon(btn.getLabel(), catColor, 22);
         }

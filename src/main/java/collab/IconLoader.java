@@ -14,6 +14,7 @@ package collab;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.geom.Ellipse2D;
 import java.awt.image.BaseMultiResolutionImage;
 import java.awt.image.BufferedImage;
 import java.util.HashMap;
@@ -45,62 +46,76 @@ public class IconLoader {
     }
 
     // ============================================================
-    // createFallbackIcon() — DPI-aware fallback icon.
+    // createFallbackIcon() — Vector-style fallback icon.
     //
-    // Returns an ImageIcon backed by a BaseMultiResolutionImage
-    // containing 1x, 2x and 3x variants. On a 150% / 200% / 300%
-    // scaled Windows display Java automatically picks the sharpest
-    // variant instead of bitmap-upscaling the 1x bitmap (which is
-    // what causes the jagged edges people see).
+    // Returns an Icon that paints directly into the destination
+    // Graphics2D instead of pre-rasterizing to a BufferedImage.
+    // That matters on fractional HiDPI scales (125% / 150%) where
+    // any pre-rasterized bitmap has to be resampled by Swing,
+    // producing the soft "blurry" edges we were fighting. By
+    // painting on the target Graphics2D we let Swing rasterize
+    // the circle and letter at native physical resolution.
     // ============================================================
-    public static ImageIcon createFallbackIcon(String label, Color color, int size) {
+    public static Icon createFallbackIcon(String label, Color color, int size) {
         String letter = (label != null && !label.isEmpty())
                 ? label.substring(0, 1).toUpperCase()
                 : "?";
-
-        BufferedImage base = renderFallbackBitmap(letter, color, size, 1.0);
-        BufferedImage x2   = renderFallbackBitmap(letter, color, size, 2.0);
-        BufferedImage x3   = renderFallbackBitmap(letter, color, size, 3.0);
-
-        Image multi = new BaseMultiResolutionImage(base, x2, x3);
-        return new ImageIcon(multi);
+        return new LetterBadgeIcon(letter, color, size);
     }
 
-    // Renders one resolution variant of the fallback icon. The caller
-    // always asks for the same logical `size`; `scale` controls how
-    // many physical pixels we draw into so Java can pick the right
-    // variant for the current display scaling.
-    private static BufferedImage renderFallbackBitmap(String letter, Color color,
-                                                      int size, double scale) {
-        int px = (int) Math.round(size * scale);
-        BufferedImage img = new BufferedImage(px, px, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = img.createGraphics();
-        try {
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                    RenderingHints.VALUE_ANTIALIAS_ON);
-            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
-                    RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL,
-                    RenderingHints.VALUE_STROKE_PURE);
-            g.setRenderingHint(RenderingHints.KEY_RENDERING,
-                    RenderingHints.VALUE_RENDER_QUALITY);
+    // Icon that draws a coloured disc with a centred capital letter.
+    // Because we paint via the caller's Graphics2D, the JVM's HiDPI
+    // transform is already applied, so every edge is crisp at 100%,
+    // 125%, 150%, 200% — no bitmap resampling happens at all.
+    private static final class LetterBadgeIcon implements Icon {
+        private final String letter;
+        private final Color color;
+        private final int size;
 
-            // Draw colored circle, scaled.
-            int inset = (int) Math.round(2 * scale);
-            g.setColor(color);
-            g.fillOval(inset, inset, px - inset * 2, px - inset * 2);
-
-            // Draw letter, scaled.
-            g.setColor(Color.WHITE);
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, (int) Math.round((size / 2.0) * scale)));
-            FontMetrics fm = g.getFontMetrics();
-            int textX = (px - fm.stringWidth(letter)) / 2;
-            int textY = (px - fm.getHeight()) / 2 + fm.getAscent();
-            g.drawString(letter, textX, textY);
-        } finally {
-            g.dispose();
+        LetterBadgeIcon(String letter, Color color, int size) {
+            this.letter = letter;
+            this.color = color;
+            this.size = size;
         }
-        return img;
+
+        @Override public int getIconWidth()  { return size; }
+        @Override public int getIconHeight() { return size; }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                        RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
+                        RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                g2.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS,
+                        RenderingHints.VALUE_FRACTIONALMETRICS_ON);
+                g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL,
+                        RenderingHints.VALUE_STROKE_PURE);
+                g2.setRenderingHint(RenderingHints.KEY_RENDERING,
+                        RenderingHints.VALUE_RENDER_QUALITY);
+
+                // Coloured disc — use Ellipse2D.Float so the shape is
+                // described in floating-point coords; the rasterizer
+                // then snaps to the physical pixel grid cleanly.
+                float inset = 1f;
+                g2.setColor(color);
+                g2.fill(new Ellipse2D.Float(
+                        x + inset, y + inset,
+                        size - inset * 2, size - inset * 2));
+
+                // Centred capital letter.
+                g2.setColor(Color.WHITE);
+                g2.setFont(new Font(Font.SANS_SERIF, Font.BOLD, Math.round(size * 0.55f)));
+                FontMetrics fm = g2.getFontMetrics();
+                int textX = x + (size - fm.stringWidth(letter)) / 2;
+                int textY = y + (size - fm.getHeight()) / 2 + fm.getAscent();
+                g2.drawString(letter, textX, textY);
+            } finally {
+                g2.dispose();
+            }
+        }
     }
 
     private ImageIcon tryLoadFromResources(String iconPath, int size) {
