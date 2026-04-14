@@ -27,13 +27,14 @@ package collab;
 // for what's essentially the same operation: "take this text, respond."
 // ============================================================
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 
 public class GeminiClient implements LlmClient {
 
@@ -41,6 +42,16 @@ public class GeminiClient implements LlmClient {
     private final String apiKey;
     private final String modelName;
     private final int maxTokens;
+
+    // Retry configuration for transient errors (connection reset,
+    // HTTP 408/425/429/499/500/502/503/504). Keeps total wall time
+    // bounded: 1s + 2s + 4s + 8s = 15s of backoff across 4 retries.
+    private static final int MAX_RETRIES = 4;
+    private static final long INITIAL_BACKOFF_MS = 1000L;
+
+    // Per-request timeout so a stalled connection fails fast and
+    // enters the retry loop instead of hanging the whole debate.
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(120);
 
     // NOTE: No apiUrl field — Gemini's URL is built dynamically because
     // the model name and API key are embedded in the URL itself.
@@ -94,31 +105,30 @@ public class GeminiClient implements LlmClient {
                 }
                 """.formatted(escapedPrompt, maxTokens);
 
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("Content-Type", "application/json")
-                    // GEMINI-SPECIFIC: No auth header needed — the key is
-                    // already in the URL above. This is why we build the URL
-                    // dynamically instead of storing a fixed apiUrl.
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .build();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("Content-Type", "application/json")
+                // GEMINI-SPECIFIC: No auth header needed — the key is
+                // already in the URL above. This is why we build the URL
+                // dynamically instead of storing a fixed apiUrl.
+                .timeout(REQUEST_TIMEOUT)
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                .build();
 
-            HttpResponse<String> response = httpClient.send(request,
-                    HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() != 200) {
-                return "[Gemini ERROR " + response.statusCode() + "] " + response.body();
-            }
-
-            // Gemini's response JSON structure:
-            // { "candidates": [{ "content": { "parts": [{ "text": "answer" }] } }] }
-            // We want the "text" field inside parts.
-            return extractField(response.body(), "text");
-
-        } catch (Exception e) {
-            return "[Gemini ERROR] " + e.getMessage();
+        HttpResponse<String> response = sendWithRetry(request);
+        if (response == null) {
+            return "[Gemini ERROR] Request failed after " + MAX_RETRIES
+                    + " retries (connection reset / transient error).";
         }
+
+        if (response.statusCode() != 200) {
+            return "[Gemini ERROR " + response.statusCode() + "] " + response.body();
+        }
+
+        // Gemini's response JSON structure:
+        // { "candidates": [{ "content": { "parts": [{ "text": "answer" }] } }] }
+        // We want the "text" field inside parts.
+        return extractField(response.body(), "text");
     }
 
     // ============================================================
@@ -171,86 +181,107 @@ public class GeminiClient implements LlmClient {
         String url = "https://generativelanguage.googleapis.com/v1beta/models/"
                 + modelName + ":generateContent?key=" + apiKey;
 
-        try {
-            HttpRequest requestObj = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .build();
+        HttpRequest requestObj = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("Content-Type", "application/json")
+                .timeout(REQUEST_TIMEOUT)
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                .build();
 
-            HttpResponse<String> response = httpClient.send(requestObj,
-                    HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() != 200) {
-                return "[Gemini ERROR " + response.statusCode() + "] " + response.body();
-            }
-
-            return extractField(response.body(), "text");
-
-        } catch (Exception e) {
-            return "[Gemini ERROR] " + e.getMessage();
+        HttpResponse<String> response = sendWithRetry(requestObj);
+        if (response == null) {
+            return "[Gemini ERROR] Request failed after " + MAX_RETRIES
+                    + " retries (connection reset / transient error).";
         }
+
+        if (response.statusCode() != 200) {
+            return "[Gemini ERROR " + response.statusCode() + "] " + response.body();
+        }
+
+        return extractField(response.body(), "text");
     }
 
 
     // ============================================================
-    // sendStateful() — Gemini Interactions API (stateful conversation).
+    // sendStateful() — Stateless delegate.
     //
-    // Uses POST https://generativelanguage.googleapis.com/v1beta/interactions
-    // with x-goog-api-key header (not key-in-URL like generateContent).
-    // On first call, sends input text. On chained calls, also sends
-    // previous_interaction_id. Falls back to stateless on any failure.
+    // Google's Gemini API does NOT expose a stateful conversation
+    // endpoint (no "interactions" API exists at v1beta/interactions —
+    // that URL returns errors and burns a round-trip). Stateful
+    // conversation with Gemini is emulated client-side by resending
+    // the full message history through generateContent, which the
+    // Maestro already accumulates in the LlmRequest it passes in.
+    //
+    // We therefore delegate to the stateless sendMessage(LlmRequest)
+    // path (which now has retry + timeout) and return a null state ID
+    // so the Maestro keeps passing full history on each turn.
     // ============================================================
     @Override
     public StatefulResponse sendStateful(LlmRequest request, String previousStateId) {
+        return new StatefulResponse(sendMessage(request), null);
+    }
+
+    // ============================================================
+    // sendWithRetry() — Execute an HttpRequest with exponential
+    // backoff for transient failures.
+    //
+    // Retries on:
+    //   - IOException / connection reset (no HTTP response at all)
+    //   - HTTP 408 Request Timeout
+    //   - HTTP 425 Too Early
+    //   - HTTP 429 Too Many Requests
+    //   - HTTP 499 Client Closed Request (nginx; typically upstream reset)
+    //   - HTTP 500/502/503/504 server-side transient errors
+    //
+    // Does NOT retry on 4xx responses that indicate a client error
+    // (bad key, bad request, etc.) — those won't fix themselves.
+    //
+    // Returns null if every retry is exhausted.
+    // ============================================================
+    private HttpResponse<String> sendWithRetry(HttpRequest request) {
+        long backoffMs = INITIAL_BACKOFF_MS;
+
+        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                HttpResponse<String> response = httpClient.send(request,
+                        HttpResponse.BodyHandlers.ofString());
+
+                if (isTransientStatus(response.statusCode())
+                        && attempt < MAX_RETRIES) {
+                    sleepQuietly(backoffMs);
+                    backoffMs *= 2;
+                    continue;
+                }
+                return response;
+
+            } catch (IOException ioe) {
+                // Connection reset, socket timeout, etc. — retry.
+                if (attempt >= MAX_RETRIES) {
+                    return null;
+                }
+                sleepQuietly(backoffMs);
+                backoffMs *= 2;
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private static boolean isTransientStatus(int status) {
+        return status == 408
+                || status == 425
+                || status == 429
+                || status == 499
+                || (status >= 500 && status <= 599);
+    }
+
+    private static void sleepQuietly(long millis) {
         try {
-            JsonObject body = new JsonObject();
-            body.addProperty("model", modelName);
-
-            if (request.systemInstruction() != null
-                    && !request.systemInstruction().isEmpty()) {
-                body.addProperty("system_instruction", request.systemInstruction());
-            }
-
-            // Always send the latest user message as input
-            body.addProperty("input", request.messages().getLast().content());
-
-            if (previousStateId != null) {
-                body.addProperty("previous_interaction_id", previousStateId);
-            }
-
-            HttpRequest httpReq = HttpRequest.newBuilder()
-                    .uri(URI.create("https://generativelanguage.googleapis.com/v1beta/interactions"))
-                    .header("Content-Type", "application/json")
-                    .header("x-goog-api-key", apiKey)
-                    .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(httpReq,
-                    HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() != 200) {
-                throw new RuntimeException("HTTP " + response.statusCode()
-                        + ": " + response.body());
-            }
-
-            // Parse Interactions API JSON:
-            // { "id": "interaction_xyz", "outputs": [{ "type": "message",
-            //   "content": [{ "type": "text", "text": "..." }] }] }
-            JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
-            String id = root.get("id").getAsString();
-            JsonArray outputs = root.getAsJsonArray("outputs");
-            JsonObject lastOutput = outputs.get(outputs.size() - 1).getAsJsonObject();
-            JsonArray content = lastOutput.getAsJsonArray("content");
-            String text = content.get(content.size() - 1).getAsJsonObject()
-                    .get("text").getAsString();
-
-            return new StatefulResponse(text, id);
-
-        } catch (Exception e) {
-            // Fallback to stateless path
-            String fallback = sendMessage(request);
-            return new StatefulResponse(fallback, null);
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
