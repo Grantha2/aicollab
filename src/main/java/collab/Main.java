@@ -150,11 +150,12 @@ public class Main {
         // The Maestro is the brain — it runs the 3-phase debate.
         // We pass it everything it needs: clients, agents, prompt builder,
         // memory, and how many debate rounds to run.
+        ApiRequestLog apiRequestLog = new ApiRequestLog();
         Maestro maestro = new Maestro(
                 claudeClient, gptClient, geminiClient,
                 claudeAgent, gptAgent, geminiAgent,
                 promptBuilder, context,
-                config.getDebateRounds(), maxTokens, sessionStore);
+                config.getDebateRounds(), maxTokens, sessionStore, apiRequestLog);
 
         // ==========================
         // STEP 8: RUN THE CLI LOOP

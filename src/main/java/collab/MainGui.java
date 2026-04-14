@@ -5,6 +5,7 @@ import com.formdev.flatlaf.FlatLightLaf;
 import javax.swing.*;
 import java.awt.*;
 import java.net.http.HttpClient;
+import java.util.ArrayList;
 import java.util.List;
 
 public class MainGui extends JFrame implements DebateListener, ButtonPanel.ButtonClickListener {
@@ -21,6 +22,14 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     private PromptTemplate activeTemplate;
     private Maestro maestro;
     private ConversationContext conversationContext;
+    // Shared API-request audit log. One instance per app lifetime so every
+    // call from any debate goes into the same JSONL file; the Context
+    // Control Dialog exposes a viewer for it.
+    private final ApiRequestLog apiRequestLog = new ApiRequestLog();
+    // Library of reusable AgentProfiles. Populated on first launch from
+    // AgentProfile.getDefaults() and then grown every time the user
+    // creates a new profile via ProfileSetEditorDialog's inline picker.
+    private AgentProfileLibrary agentProfileLibrary;
 
     // Executive Suite components
     private CategoryColorMap colorMap;
@@ -42,12 +51,17 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
 
     private JComboBox<String> stakeholderCombo;
     private JComboBox<String> profileCombo;
-    private JPanel claudeStream;
-    private JPanel gptStream;
-    private JPanel geminiStream;
-    private JScrollPane claudeScroll;
-    private JScrollPane gptScroll;
-    private JScrollPane geminiScroll;
+    // Per-slot UI. streams.get(i) is the JPanel that collects slot i's
+    // cards; scrolls.get(i) is its wrapping JScrollPane; slotDisplayNames
+    // is a cached copy of slot.displayName() used to tag status-bar badges.
+    // All three lists are rebuilt whenever the active slot count changes.
+    private List<JPanel> streams = new ArrayList<>();
+    private List<JScrollPane> scrolls = new ArrayList<>();
+    private List<String> slotDisplayNames = new ArrayList<>();
+    // Container whose contents are re-laid-out with a new GridLayout whenever
+    // the panelist count changes. Keeping a stable outer component means
+    // buildDebateContentPanel() doesn't have to run again on every rebuild.
+    private JPanel streamsContainer;
     private JTextArea promptArea;
     private JTextArea synthesisArea;
     private JLabel statusLabel;
@@ -232,16 +246,11 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     }
 
     /**
-     * Creates the shared stream panels, synthesis area, and prompt area.
+     * Creates the shared synthesis area and prompt area. Per-slot stream
+     * panels are built later, once we know how many slots the active
+     * profile set has (see {@link #rebuildStreamsForSlots}).
      */
     private void buildDebateComponents() {
-        claudeStream = createStreamPanel();
-        gptStream = createStreamPanel();
-        geminiStream = createStreamPanel();
-        claudeScroll = new JScrollPane(claudeStream);
-        gptScroll = new JScrollPane(gptStream);
-        geminiScroll = new JScrollPane(geminiStream);
-
         synthesisArea = new JTextArea();
         synthesisArea.setEditable(false);
         synthesisArea.setLineWrap(true);
@@ -253,25 +262,18 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     }
 
     /**
-     * Builds the debate content panel containing model streams, synthesis,
-     * and prompt. This panel is re-parented between Executive Suite and
-     * Debate views when switching.
+     * Builds the debate content panel: a top streamsContainer (dynamically
+     * laid out with one cell per panelist slot), the synthesis area, and
+     * the prompt dock. The actual grid inside streamsContainer is filled
+     * by {@link #rebuildStreamsForSlots}.
      */
     private JPanel buildDebateContentPanel() {
         JPanel panel = new JPanel(new BorderLayout(8, 8));
 
-        JSplitPane leftMidSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
-                wrap("Claude", claudeScroll),
-                wrap("GPT", gptScroll));
-        leftMidSplit.setResizeWeight(0.5);
-
-        JSplitPane topSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
-                leftMidSplit,
-                wrap("Gemini", geminiScroll));
-        topSplit.setResizeWeight(0.67);
+        streamsContainer = new JPanel(new BorderLayout());
 
         JSplitPane mainVerticalSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
-                topSplit,
+                streamsContainer,
                 wrap("Synthesis", new JScrollPane(synthesisArea)));
         mainVerticalSplit.setResizeWeight(0.62);
 
@@ -283,6 +285,72 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         panel.add(mainVerticalSplit, BorderLayout.CENTER);
         panel.add(promptDock, BorderLayout.SOUTH);
         return panel;
+    }
+
+    /**
+     * Rebuilds the per-slot stream panels inside {@code streamsContainer}
+     * using a grid sized to the slot count (2 -> 1x2, 3 -> 1x3, 4 -> 2x2,
+     * 5-6 -> 2x3, 7-8 -> 2x4, more -> 2 rows wide as needed). Called
+     * every time the active profile set changes.
+     */
+    private void rebuildStreamsForSlots(List<PanelistSlot> slots) {
+        streams.clear();
+        scrolls.clear();
+        slotDisplayNames.clear();
+
+        if (streamsContainer == null) return;
+        streamsContainer.removeAll();
+
+        int n = slots == null ? 0 : slots.size();
+        if (n == 0) {
+            streamsContainer.revalidate();
+            streamsContainer.repaint();
+            return;
+        }
+
+        int[] dims = gridDimsFor(n);
+        JPanel grid = new JPanel(new GridLayout(dims[0], dims[1], 8, 8));
+        for (int i = 0; i < n; i++) {
+            JPanel stream = createStreamPanel();
+            JScrollPane scroll = new JScrollPane(stream);
+            String label = slots.get(i).displayName();
+            // Disambiguate duplicate display names (e.g. two Claudes) by
+            // appending a 1-based index so users can tell the cards apart.
+            String title = label;
+            int dup = 0;
+            for (int j = 0; j < i; j++) {
+                if (label.equals(slots.get(j).displayName())) dup++;
+            }
+            if (dup > 0 || hasDuplicateAhead(slots, i, label)) {
+                title = label + " #" + (dup + 1);
+            }
+            grid.add(wrap(title, scroll));
+            streams.add(stream);
+            scrolls.add(scroll);
+            slotDisplayNames.add(label);
+        }
+        streamsContainer.add(grid, BorderLayout.CENTER);
+        streamsContainer.revalidate();
+        streamsContainer.repaint();
+    }
+
+    private boolean hasDuplicateAhead(List<PanelistSlot> slots, int fromIdx, String label) {
+        for (int k = fromIdx + 1; k < slots.size(); k++) {
+            if (label.equals(slots.get(k).displayName())) return true;
+        }
+        return false;
+    }
+
+    private int[] gridDimsFor(int n) {
+        return switch (n) {
+            case 1 -> new int[]{1, 1};
+            case 2 -> new int[]{1, 2};
+            case 3 -> new int[]{1, 3};
+            case 4 -> new int[]{2, 2};
+            case 5, 6 -> new int[]{2, 3};
+            case 7, 8 -> new int[]{2, 4};
+            default -> new int[]{(n + 3) / 4, 4};
+        };
     }
 
     private JPanel createStreamPanel() {
@@ -306,21 +374,31 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     }
 
     /**
-     * Renders the three active panel agents in the status bar so it is
-     * always obvious which three personas Maestro will use.
+     * Renders the active panel agents in the status bar so it is always
+     * obvious which personas Maestro will use. Iterates every slot so
+     * variable-size panels (2+ members) render correctly.
      */
     private void updateActivePanelLabel() {
         if (activePanelLabel == null) return;
-        if (activeProfileSet == null || activeProfileSet.getAgents() == null
-                || activeProfileSet.getAgents().size() < 3) {
+        if (activeProfileSet == null) {
             activePanelLabel.setText("Panel: (not configured)");
             return;
         }
-        List<AgentProfile> agents = activeProfileSet.getAgents();
-        activePanelLabel.setText("Panel: "
-                + agents.get(0).getName() + " \u00b7 " + agents.get(0).getPerspective() + "  \u2502  "
-                + agents.get(1).getName() + " \u00b7 " + agents.get(1).getPerspective() + "  \u2502  "
-                + agents.get(2).getName() + " \u00b7 " + agents.get(2).getPerspective());
+        List<PanelistSlot> slots = activeProfileSet.getSlots();
+        if (slots == null || slots.isEmpty()) {
+            activePanelLabel.setText("Panel: (not configured)");
+            return;
+        }
+        StringBuilder sb = new StringBuilder("Panel: ");
+        for (int i = 0; i < slots.size(); i++) {
+            if (i > 0) sb.append("  \u2502  ");
+            AgentProfile ap = slots.get(i).getAgent();
+            String name = ap != null && ap.getName() != null ? ap.getName() : slots.get(i).displayName();
+            String persp = ap != null && ap.getPerspective() != null ? ap.getPerspective() : "";
+            sb.append(name);
+            if (!persp.isBlank()) sb.append(" \u00b7 ").append(persp);
+        }
+        activePanelLabel.setText(sb.toString());
     }
 
     private JPanel wrap(String title, JComponent component) {
@@ -331,8 +409,9 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     }
 
     private boolean needsSetup(ProfileSet profile) {
+        List<PanelistSlot> slots = profile.getSlots();
         return (profile.getTeamContext() == null || profile.getTeamContext().isBlank())
-            && (profile.getAgents() == null || profile.getAgents().isEmpty())
+            && (slots == null || slots.isEmpty())
             && (profile.getStakeholders() == null || profile.getStakeholders().isEmpty());
     }
 
@@ -341,6 +420,11 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             config = new Config("config.properties");
             profileLibrary = new ProfileLibrary();
             profileLibrary.ensureDefaultExists();
+
+            // Seed the per-profile library once so the editor can offer a
+            // non-empty picker on first launch.
+            agentProfileLibrary = new AgentProfileLibrary();
+            agentProfileLibrary.ensureSeeded();
             List<String> names = profileLibrary.listAvailableSets();
             activeProfileSet = profileLibrary.loadSet(names.getFirst());
 
@@ -455,13 +539,14 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     }
 
     private void rebuildMaestro() {
-        // Maestro requires exactly 3 agent slots (Claude / GPT / Gemini).
-        // ProfileSetEditorDialog enforces this on save, but guard defensively
-        // so a manually-edited profile-set.json can't crash the app silently.
-        List<AgentProfile> agents = activeProfileSet.getAgents();
-        if (agents == null || agents.size() < 3) {
-            statusLabel.setText("Active profile set has fewer than 3 agents — edit the profile to continue.");
+        // Build one LlmClient per slot via PanelistSlot.buildClient() so
+        // the provider/model mapping lives in a single place. Any mix of
+        // providers (including duplicates) is allowed.
+        List<PanelistSlot> slots = activeProfileSet == null ? null : activeProfileSet.getSlots();
+        if (slots == null || slots.size() < 2) {
+            statusLabel.setText("Active profile set has fewer than 2 panelists — edit the profile to continue.");
             maestro = null;
+            rebuildStreamsForSlots(List.of());
             updateActivePanelLabel();
             return;
         }
@@ -469,12 +554,10 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         HttpClient httpClient = HttpClient.newHttpClient();
         int maxTokens = config.getMaxResponseTokens();
 
-        LlmClient claudeClient = new AnthropicClient(httpClient, config.getClaudeUrl(),
-                config.getClaudeKey(), config.getClaudeModel(), maxTokens);
-        LlmClient gptClient = new OpenAiClient(httpClient, config.getOpenAiUrl(),
-                config.getOpenAiKey(), config.getOpenAiModel(), maxTokens);
-        LlmClient geminiClient = new GeminiClient(httpClient,
-                config.getGeminiKey(), config.getGeminiModel(), maxTokens);
+        List<LlmClient> clients = new ArrayList<>();
+        for (PanelistSlot slot : slots) {
+            clients.add(slot.buildClient(config, httpClient, maxTokens));
+        }
 
         conversationContext = new ConversationContext(config.getMaxHistoryChars());
         String effectiveTeamCtx = contextController.getEffectiveTeamContext(activeProfileSet.getTeamContext());
@@ -483,11 +566,14 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         SessionStore sessionStore = SessionStore.createNewDefaultSession();
 
         maestro = new Maestro(
-                claudeClient, gptClient, geminiClient,
-                agents.get(0), agents.get(1), agents.get(2),
+                slots, clients,
                 promptBuilder, conversationContext,
-                config.getDebateRounds(), maxTokens, sessionStore);
+                config.getDebateRounds(), maxTokens, sessionStore, apiRequestLog);
         maestro.setDebateListener(this);
+
+        // Rebuild the per-slot stream grid so the UI matches the panel
+        // composition. Safe to call repeatedly — it clears and re-adds.
+        rebuildStreamsForSlots(slots);
         updateActivePanelLabel();
     }
 
@@ -586,19 +672,25 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     }
 
     /**
-     * Runs a simple single-API-call task using Claude (first available model).
-     * Displays the result in the Claude stream panel.
+     * Runs a simple single-API-call task using the first slot's provider.
+     * Displays the result in slot 0's stream panel.
      */
     private void onRunSimpleTask(String prompt) {
         if (maestro == null || activeProfileSet == null) {
             statusLabel.setText("No model configured. Check settings.");
             return;
         }
+        List<PanelistSlot> slots = activeProfileSet.getSlots();
+        if (slots == null || slots.isEmpty()) {
+            statusLabel.setText("No panelists configured. Check settings.");
+            return;
+        }
+        PanelistSlot firstSlot = slots.get(0);
         statusLabel.setText("Running simple task...");
 
         cycleCount++;
-        if (cycleCount > 1) {
-            appendCycleDivider(claudeStream, cycleCount);
+        if (cycleCount > 1 && !streams.isEmpty()) {
+            appendCycleDivider(streams.get(0), cycleCount);
         }
 
         new SwingWorker<String, Void>() {
@@ -606,8 +698,7 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             protected String doInBackground() {
                 java.net.http.HttpClient httpClient = java.net.http.HttpClient.newHttpClient();
                 int maxTokens = config.getMaxResponseTokens();
-                LlmClient client = new AnthropicClient(httpClient, config.getClaudeUrl(),
-                        config.getClaudeKey(), config.getClaudeModel(), maxTokens);
+                LlmClient client = firstSlot.buildClient(config, httpClient, maxTokens);
                 return client.sendMessage(prompt);
             }
 
@@ -616,7 +707,7 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
                 try {
                     String response = get();
                     SwingUtilities.invokeLater(() -> {
-                        appendCard("Claude", "Task Result",
+                        appendCard(0, "Task Result",
                                 response, tint(Color.ORANGE, 0.9), false);
                         statusLabel.setText("Simple task complete.");
                     });
@@ -718,7 +809,8 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     }
 
     private void onCreateProfileSet() {
-        ProfileSetEditorDialog dialog = new ProfileSetEditorDialog(this, activeProfileSet);
+        ProfileSetEditorDialog dialog = new ProfileSetEditorDialog(
+                this, activeProfileSet, agentProfileLibrary, config);
         dialog.setVisible(true);
         ProfileSet newSet = dialog.getProfileSet();
         if (newSet == null) {
@@ -765,7 +857,8 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         };
         ContextControlDialog dialog = new ContextControlDialog(
                 this, contextController, conversationContext, activeProfileSet,
-                activeTemplate, onProfileSaved, onEditProfile, onTemplateSaved);
+                activeTemplate, onProfileSaved, onEditProfile, onTemplateSaved,
+                apiRequestLog);
         dialog.setVisible(true);
     }
 
@@ -774,9 +867,9 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
                 "Clear all conversation history and streams?",
                 "Confirm Clear", JOptionPane.YES_NO_OPTION);
         if (confirm == JOptionPane.YES_OPTION) {
-            clearStream(claudeStream);
-            clearStream(gptStream);
-            clearStream(geminiStream);
+            for (JPanel stream : streams) {
+                clearStream(stream);
+            }
             synthesisArea.setText("");
             if (conversationContext != null) {
                 conversationContext.clear();
@@ -808,9 +901,9 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         // Phase 5b: Don't clear streams \u2014 add cycle divider instead
         cycleCount++;
         if (cycleCount > 1) {
-            appendCycleDivider(claudeStream, cycleCount);
-            appendCycleDivider(gptStream, cycleCount);
-            appendCycleDivider(geminiStream, cycleCount);
+            for (JPanel stream : streams) {
+                appendCycleDivider(stream, cycleCount);
+            }
             synthesisArea.append("\n\n" + "\u2550".repeat(40) + " Cycle " + cycleCount + " " + "\u2550".repeat(40) + "\n\n");
         }
 
@@ -845,8 +938,8 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     // ============================================================
 
     @Override
-    public void onPhase1Response(String model, String perspective, String response) {
-        SwingUtilities.invokeLater(() -> appendCard(model,
+    public void onPhase1Response(int slotIndex, String model, String perspective, String response) {
+        SwingUtilities.invokeLater(() -> appendCard(slotIndex,
                 "Phase 1 \u2014 " + perspective,
                 response,
                 colorForPhase(model, 0),
@@ -854,8 +947,8 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     }
 
     @Override
-    public void onPhase2Reaction(int round, String model, String perspective, String reaction) {
-        SwingUtilities.invokeLater(() -> appendCard(model,
+    public void onPhase2Reaction(int slotIndex, int round, String model, String perspective, String reaction) {
+        SwingUtilities.invokeLater(() -> appendCard(slotIndex,
                 "Phase 2 Round " + round + " \u2014 " + perspective,
                 reaction,
                 colorForPhase(model, round),
@@ -882,16 +975,28 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     }
 
     private void maybeAppendApiCallBadge(String message) {
-        if (message == null) {
-            return;
+        if (message == null) return;
+        // Match against the current slot display names so any mix of
+        // providers (including duplicates) surfaces the "Calling X..."
+        // badge in the correct stream panel. Uses the first match to
+        // stay deterministic when a status message mentions two names.
+        for (int i = 0; i < slotDisplayNames.size(); i++) {
+            String name = slotDisplayNames.get(i);
+            if (name != null && !name.isBlank() && message.contains(name)) {
+                appendCard(i, "API Call", message, tint(badgeColorForName(name), 0.9), true);
+                return;
+            }
         }
-        if (message.contains("Claude")) {
-            appendCard("Claude", "API Call", message, tint(Color.ORANGE, 0.9), true);
-        } else if (message.contains("GPT")) {
-            appendCard("GPT", "API Call", message, tint(Color.DARK_GRAY, 0.92), true);
-        } else if (message.contains("Gemini")) {
-            appendCard("Gemini", "API Call", message, tint(new Color(66, 133, 244), 0.9), true);
-        }
+    }
+
+    private Color badgeColorForName(String name) {
+        if (name == null) return Color.LIGHT_GRAY;
+        return switch (name) {
+            case "Claude" -> Color.ORANGE;
+            case "GPT" -> Color.DARK_GRAY;
+            case "Gemini" -> new Color(66, 133, 244);
+            default -> new Color(120, 120, 160);
+        };
     }
 
     private void clearStream(JPanel panel) {
@@ -900,9 +1005,10 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         panel.repaint();
     }
 
-    private void appendCard(String model, String title, String body, Color bg, boolean compact) {
-        JPanel stream = streamForModel(model);
-        JScrollPane scroll = scrollForModel(model);
+    private void appendCard(int slotIndex, String title, String body, Color bg, boolean compact) {
+        if (slotIndex < 0 || slotIndex >= streams.size()) return;
+        JPanel stream = streams.get(slotIndex);
+        JScrollPane scroll = scrolls.get(slotIndex);
         if (stream == null || scroll == null) {
             return;
         }
@@ -938,24 +1044,6 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             JScrollBar bar = scroll.getVerticalScrollBar();
             bar.setValue(bar.getMaximum());
         });
-    }
-
-    private JPanel streamForModel(String model) {
-        return switch (model) {
-            case "Claude" -> claudeStream;
-            case "GPT" -> gptStream;
-            case "Gemini" -> geminiStream;
-            default -> null;
-        };
-    }
-
-    private JScrollPane scrollForModel(String model) {
-        return switch (model) {
-            case "Claude" -> claudeScroll;
-            case "GPT" -> gptScroll;
-            case "Gemini" -> geminiScroll;
-            default -> null;
-        };
     }
 
     // ============================================================

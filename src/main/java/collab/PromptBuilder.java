@@ -1,5 +1,7 @@
 package collab;
 
+import java.util.List;
+
 // ============================================================
 // PromptBuilder.java — Builds all prompt types for the debate cycle.
 //
@@ -235,6 +237,41 @@ public class PromptBuilder {
     }
 
     // ============================================================
+    // buildPhase2PeerMessage() — Variadic overload for N-panelist
+    // panels. The caller passes a list of Peer(name, response) pairs,
+    // one per OTHER panelist, and we emit one "--- {name}'s Response ---"
+    // block per peer. This is the method the list-based Maestro uses.
+    // ============================================================
+    public String buildPhase2PeerMessage(AgentProfile agent,
+                                         String userPrompt,
+                                         List<Peer> peers) {
+        PromptTemplate tmpl = effectiveTemplate();
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("THE ORIGINAL QUESTION:\n");
+        sb.append(userPrompt).append("\n\n");
+
+        sb.append("You are ").append(agent.getName()).append(". ");
+        sb.append(tmpl.getReactionPreamble());
+
+        for (Peer p : peers) {
+            sb.append("--- ").append(p.name()).append("'s Response ---\n");
+            sb.append(p.response()).append("\n\n");
+        }
+
+        sb.append(tmpl.getReactionTask());
+
+        return sb.toString();
+    }
+
+    /**
+     * One peer's contribution fed into another panelist's reaction prompt.
+     * Bundles the display name with the latest response so the caller
+     * doesn't have to juggle parallel lists.
+     */
+    public record Peer(String name, String response) {}
+
+    // ============================================================
     // buildSynthesisPrompt() — Constructs the Phase 3 prompt where
     // Claude synthesizes all perspectives into a structured report.
     //
@@ -326,6 +363,50 @@ public class PromptBuilder {
         sb.append("--- Gemini's Reaction ---\n").append(geminiReaction).append("\n\n");
 
         // Editable task: "=== YOUR TASK ===" + four numbered sections
+        sb.append(tmpl.getSynthesisTask());
+
+        return sb.toString();
+    }
+
+    // ============================================================
+    // buildPhase3SynthesisMessage() — Variadic overload for N-panelist
+    // panels. agents/displayNames/phase1Responses/finalReactions are
+    // parallel lists: element i is the same panelist's data across all
+    // four lists. Emits one block per panelist in order.
+    // ============================================================
+    public String buildPhase3SynthesisMessage(StakeholderProfile stakeholder,
+                                              String userPrompt,
+                                              List<AgentProfile> agents,
+                                              List<String> displayNames,
+                                              List<String> phase1Responses,
+                                              List<String> finalReactions) {
+        PromptTemplate tmpl = effectiveTemplate();
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("You are the orchestrator of a multi-AI advisory panel.\n\n");
+
+        sb.append(tmpl.getSynthesisPreamble());
+
+        sb.append("=== ORIGINAL QUESTION ===\n");
+        sb.append(userPrompt).append("\n\n");
+
+        sb.append("=== PHASE 1: INITIAL RESPONSES ===\n\n");
+        for (int i = 0; i < agents.size(); i++) {
+            String persp = agents.get(i) != null ? agents.get(i).getPerspective() : "";
+            sb.append("--- ").append(displayNames.get(i));
+            if (persp != null && !persp.isBlank()) {
+                sb.append(" (").append(persp).append(")");
+            }
+            sb.append(" ---\n");
+            sb.append(phase1Responses.get(i)).append("\n\n");
+        }
+
+        sb.append("=== PHASE 2: CROSS-REACTIONS ===\n\n");
+        for (int i = 0; i < agents.size(); i++) {
+            sb.append("--- ").append(displayNames.get(i)).append("'s Reaction ---\n");
+            sb.append(finalReactions.get(i)).append("\n\n");
+        }
+
         sb.append(tmpl.getSynthesisTask());
 
         return sb.toString();
