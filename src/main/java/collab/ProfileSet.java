@@ -44,6 +44,10 @@ public class ProfileSet {
         return stakeholders;
     }
 
+    public void setStakeholders(List<StakeholderProfile> stakeholders) {
+        this.stakeholders = stakeholders;
+    }
+
     public static ProfileSet fromDefaults() {
         return new ProfileSet(
                 "default",
