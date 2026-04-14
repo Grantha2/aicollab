@@ -77,19 +77,49 @@ public class IconLoader {
         String resourcePath = "/icons/" + iconPath;
         java.net.URL url = getClass().getResource(resourcePath);
         if (url != null) {
-            ImageIcon raw = new ImageIcon(url);
-            Image scaled = raw.getImage().getScaledInstance(size, size, Image.SCALE_SMOOTH);
-            return new ImageIcon(scaled);
+            return new ImageIcon(scaleHighQuality(new ImageIcon(url).getImage(), size, size));
         }
 
         // Try loading from file system
         java.io.File file = new java.io.File(iconPath);
         if (file.exists()) {
-            ImageIcon raw = new ImageIcon(file.getAbsolutePath());
-            Image scaled = raw.getImage().getScaledInstance(size, size, Image.SCALE_SMOOTH);
-            return new ImageIcon(scaled);
+            return new ImageIcon(scaleHighQuality(
+                    new ImageIcon(file.getAbsolutePath()).getImage(), size, size));
         }
 
         return null;
+    }
+
+    // ============================================================
+    // scaleHighQuality() — Crisp icon scaling for HiDPI displays.
+    //
+    // Image.getScaledInstance(..., SCALE_SMOOTH) is deprecated and
+    // produces blurry results, especially when shrinking. Rendering
+    // the source image into a BufferedImage with bicubic/bilinear
+    // interpolation plus quality hints keeps edges sharp on both
+    // standard and HiDPI screens.
+    // ============================================================
+    private static BufferedImage scaleHighQuality(Image src, int width, int height) {
+        // Ensure the source image is fully loaded before we draw it.
+        Image source = src;
+        if (source.getWidth(null) <= 0 || source.getHeight(null) <= 0) {
+            ImageIcon wait = new ImageIcon(source);
+            source = wait.getImage();
+        }
+
+        BufferedImage dst = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = dst.createGraphics();
+        try {
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                    RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING,
+                    RenderingHints.VALUE_RENDER_QUALITY);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                    RenderingHints.VALUE_ANTIALIAS_ON);
+            g.drawImage(source, 0, 0, width, height, null);
+        } finally {
+            g.dispose();
+        }
+        return dst;
     }
 }
