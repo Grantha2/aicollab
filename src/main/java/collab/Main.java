@@ -42,6 +42,17 @@ import java.util.Scanner;
 public class Main {
 
     public static void main(String[] args) {
+        // ============================================================
+        // HiDPI / RETINA AWARENESS
+        //
+        // These properties MUST be set before any AWT/Swing class is
+        // loaded, otherwise the JVM has already committed to a
+        // non-scaled rendering pipeline and the GUI ships out blurry
+        // on high-DPI (Retina, 4K) displays. We also enable the
+        // system's font antialiasing settings so text stays crisp.
+        // ============================================================
+        configureHiDpi();
+
         boolean cliMode = java.util.Arrays.stream(args).anyMatch("--cli"::equals);
         if (!cliMode) {
             MainGui.launch();
@@ -401,5 +412,28 @@ public class Main {
         }
 
         return current;
+    }
+
+    // ============================================================
+    // configureHiDpi() — Turns on DPI awareness and crisp text.
+    //
+    // Called at the very top of main() before any AWT/Swing class
+    // is loaded. Setting these properties after the AWT toolkit
+    // has initialised is a no-op, which is why we do it here.
+    // ============================================================
+    private static void configureHiDpi() {
+        // Scale the Swing rendering pipeline to the display's DPI.
+        setIfAbsent("sun.java2d.uiScale.enabled", "true");
+        // Tell the Windows/Linux JVM to honour OS DPI awareness.
+        setIfAbsent("sun.java2d.dpiaware", "true");
+        // Use the OS-configured subpixel AA for fonts (LCD / greyscale).
+        setIfAbsent("awt.useSystemAAFontSettings", "on");
+        setIfAbsent("swing.aatext", "true");
+    }
+
+    private static void setIfAbsent(String key, String value) {
+        if (System.getProperty(key) == null) {
+            System.setProperty(key, value);
+        }
     }
 }
