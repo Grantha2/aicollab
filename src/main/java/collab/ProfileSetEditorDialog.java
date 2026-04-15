@@ -152,6 +152,25 @@ public class ProfileSetEditorDialog extends JDialog {
         agentsPanel.setLayout(new BoxLayout(agentsPanel, BoxLayout.Y_AXIS));
         agentsPanel.setBorder(BorderFactory.createTitledBorder("Panelist Slots"));
 
+        // Build the add-panelist button BEFORE the seed loop — addSlotRow
+        // calls relayoutAgentsPanel which references addAgentBtn. The old
+        // init-after-loop ordering caused a NullPointerException on open.
+        addAgentBtn = new JButton("+ Add Panelist Slot");
+        addAgentBtn.setToolTipText("Add one more chat window / panelist to the debate panel.");
+        addAgentBtn.setAlignmentX(LEFT_ALIGNMENT);
+        addAgentBtn.addActionListener(e -> {
+            if (slotRows.size() >= MAX_AGENTS) {
+                JOptionPane.showMessageDialog(this,
+                        "The panel is capped at " + MAX_AGENTS + " slots.",
+                        "Slot limit", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            // Append with empty selections so onSave() validation forces
+            // the user to fill provider/model/profile before saving.
+            addSlotRow(new PanelistSlot(null, null, null));
+            relayoutAgentsPanel();
+        });
+
         // Seed slot rows from the existing set. getSlots() synthesises
         // defaults from legacy `agents` lists so old profile sets still
         // open cleanly.
@@ -183,24 +202,18 @@ public class ProfileSetEditorDialog extends JDialog {
             addSlotRow(slot);
         }
 
-        addAgentBtn = new JButton("+ Add Agent");
-        addAgentBtn.setAlignmentX(LEFT_ALIGNMENT);
-        addAgentBtn.addActionListener(e -> {
-            if (slotRows.size() >= MAX_AGENTS) {
-                JOptionPane.showMessageDialog(this,
-                        "The panel is capped at " + MAX_AGENTS + " slots.",
-                        "Slot limit", JOptionPane.INFORMATION_MESSAGE);
-                return;
-            }
-            // Append with empty selections so onSave() validation forces
-            // the user to fill provider/model/profile before saving.
-            addSlotRow(new PanelistSlot(null, null, null));
-            relayoutAgentsPanel();
-        });
-        agentsPanel.add(addAgentBtn);
+        // Discoverability: a plain-English sentence sitting above the slot
+        // list so first-time users understand slots == on-screen chat windows.
+        JLabel slotsHint = new JLabel(
+                "Each slot is one chat window on the main view. "
+                        + "Add, remove, or reconfigure below.");
+        slotsHint.setBorder(BorderFactory.createEmptyBorder(0, 4, 4, 4));
 
         panel.add(meta, BorderLayout.NORTH);
-        panel.add(new JScrollPane(agentsPanel), BorderLayout.CENTER);
+        JPanel slotsWrapper = new JPanel(new BorderLayout());
+        slotsWrapper.add(slotsHint, BorderLayout.NORTH);
+        slotsWrapper.add(new JScrollPane(agentsPanel), BorderLayout.CENTER);
+        panel.add(slotsWrapper, BorderLayout.CENTER);
         return panel;
     }
 

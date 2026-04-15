@@ -107,9 +107,17 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         selectProfile.addActionListener(e -> onSelectProfileSet());
         JMenuItem createProfile = new JMenuItem("Create Profile Set...");
         createProfile.addActionListener(e -> onCreateProfileSet());
+        // Discoverability: "Edit" makes it obvious that the current panel
+        // composition (including number of chat windows / slots) is
+        // editable — users were looking for a "deploy another chat window"
+        // affordance and couldn't guess that Create Profile Set is where
+        // slots live.
+        JMenuItem editCurrentProfile = new JMenuItem("Edit Current Profile Set...");
+        editCurrentProfile.addActionListener(e -> onEditCurrentProfileSet());
         settingsMenu.add(editConfig);
         settingsMenu.add(selectProfile);
         settingsMenu.add(createProfile);
+        settingsMenu.add(editCurrentProfile);
         menuBar.add(settingsMenu);
 
         // Context menu
@@ -809,8 +817,18 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
     }
 
     private void onCreateProfileSet() {
+        // Pass null so the editor seeds with fresh default slots instead
+        // of editing the active set in place.
+        openProfileSetEditor(null);
+    }
+
+    private void onEditCurrentProfileSet() {
+        openProfileSetEditor(activeProfileSet);
+    }
+
+    private void openProfileSetEditor(ProfileSet seed) {
         ProfileSetEditorDialog dialog = new ProfileSetEditorDialog(
-                this, activeProfileSet, agentProfileLibrary, config);
+                this, seed, agentProfileLibrary, config);
         dialog.setVisible(true);
         ProfileSet newSet = dialog.getProfileSet();
         if (newSet == null) {
@@ -822,7 +840,8 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             refreshProfileCombo();
             rebuildStakeholderCombo();
             rebuildMaestro();
-            statusLabel.setText("Created and loaded profile set: " + newSet.getName());
+            statusLabel.setText((seed == null ? "Created" : "Updated")
+                    + " and loaded profile set: " + newSet.getName());
         } catch (Exception e) {
             JOptionPane.showMessageDialog(this,
                     "Unable to save profile set: " + e.getMessage(),
@@ -843,7 +862,10 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
                         "Profile Save Error", JOptionPane.ERROR_MESSAGE);
             }
         };
-        Runnable onEditProfile = this::onCreateProfileSet;
+        // Context Control's "Edit Profile" button specifically means edit
+        // the currently active set in place — route to the edit flow so the
+        // editor opens pre-populated with the user's existing slots.
+        Runnable onEditProfile = this::onEditCurrentProfileSet;
         Runnable onTemplateSaved = () -> {
             try {
                 templateLibrary.saveSet(activeTemplate, "default");

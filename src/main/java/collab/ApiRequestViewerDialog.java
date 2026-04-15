@@ -45,7 +45,15 @@ public class ApiRequestViewerDialog extends JDialog {
         this.log = log;
 
         setLayout(new BorderLayout(8, 8));
-        add(buildFilterBar(), BorderLayout.NORTH);
+
+        // Top region stacks the state-management help banner on top of
+        // the filter bar so newcomers have context for why Gemini/Claude
+        // messages look different from OpenAI's.
+        JPanel north = new JPanel(new BorderLayout(0, 4));
+        north.add(buildStateHelpBanner(), BorderLayout.NORTH);
+        north.add(buildFilterBar(), BorderLayout.CENTER);
+        add(north, BorderLayout.NORTH);
+
         add(buildSplit(), BorderLayout.CENTER);
         add(buildButtons(), BorderLayout.SOUTH);
 
@@ -54,6 +62,31 @@ public class ApiRequestViewerDialog extends JDialog {
         setLocationRelativeTo(owner);
 
         reload();
+    }
+
+    // ============================================================
+    // buildStateHelpBanner() — Short explainer for why the payload
+    // shape differs across providers.
+    //
+    // The three LlmClient implementations handle "stateful" calls
+    // very differently, and the audit viewer is the first place a
+    // user sees that on the wire. Without this banner, an Anthropic
+    // Phase-2 request (full history) vs. an OpenAI Phase-2 request
+    // (previous_response_id + one new turn) looks like a bug.
+    // ============================================================
+    private JComponent buildStateHelpBanner() {
+        // HTML so the long sentence wraps gracefully at narrow widths.
+        JLabel help = new JLabel(
+                "<html><body style='margin:0;'>"
+                + "<b>About request state:</b> "
+                + "<b>Anthropic (Claude)</b> uses client-side history \u2014 full prior messages are resent each turn. "
+                + "<b>OpenAI (GPT)</b> uses server-side state via the Responses API \u2014 chained turns send only the new user message plus <code>previous_response_id</code>. "
+                + "<b>Google (Gemini)</b> is currently stateless \u2014 each request carries only the latest user message (known limitation; context from earlier phases is not included)."
+                + "</body></html>");
+        help.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, UIManager.getColor("Separator.foreground")),
+                BorderFactory.createEmptyBorder(6, 10, 6, 10)));
+        return help;
     }
 
     private JComponent buildFilterBar() {
