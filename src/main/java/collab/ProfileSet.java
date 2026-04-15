@@ -13,6 +13,13 @@ public class ProfileSet {
     // for backwards compatibility — legacy profile-set JSON files with
     // only `agents` still load; getSlots() synthesises slots on demand.
     private List<PanelistSlot> slots;
+    // Phase A: debate-level file attachments every panelist sees on
+    // turn 1. Persisted as part of the profile set so reopening the
+    // app with the same set keeps the files attached; provider-side
+    // file IDs are NOT persisted here (they live in FileUploader's
+    // in-memory cache and re-upload on app restart — see that class
+    // for the reasoning).
+    private List<FileAttachment> attachments;
 
     ProfileSet() {}
 
@@ -83,6 +90,21 @@ public class ProfileSet {
             synthesised.add(new PanelistSlot(p, null /* let Config pick model */, legacy.get(i)));
         }
         return synthesised;
+    }
+
+    /**
+     * Files attached to this profile set. Every panelist receives
+     * these on their Phase 1 turn (via FileUploader → provider Files
+     * API → inline document/input_file/fileData reference). Returns
+     * an empty list when the field is absent so legacy profile sets
+     * keep deserialising cleanly.
+     */
+    public List<FileAttachment> getAttachments() {
+        return attachments == null ? new ArrayList<>() : attachments;
+    }
+
+    public void setAttachments(List<FileAttachment> attachments) {
+        this.attachments = attachments;
     }
 
     public void setSlots(List<PanelistSlot> slots) {

@@ -55,6 +55,11 @@ public class AnthropicClient implements LlmClient {
     private static class ConversationState {
         String systemInstruction;
         final List<ChatMessage> messages = new ArrayList<>();
+        // Attachments stashed on the first turn so client-side replay
+        // can re-inject them as document blocks on every subsequent
+        // turn's outgoing request. Anthropic is stateless on the wire,
+        // so "the server remembers the document" is our responsibility.
+        final List<ContextAttachment> pinnedAttachments = new ArrayList<>();
     }
 
     // ============================================================
@@ -161,11 +166,24 @@ public class AnthropicClient implements LlmClient {
             body.addProperty("system", request.systemInstruction());
         }
 
+        // Resolve attachments to file_ids up-front. Failed uploads
+        // return null and are simply omitted — debate continues
+        // without the attachment rather than erroring out.
+        List<String> attachmentFileIds = resolveAttachmentIds(request.attachments());
+
         JsonArray messages = new JsonArray();
-        for (ChatMessage msg : request.messages()) {
+        int lastUserIndex = lastUserMessageIndex(request.messages());
+        for (int i = 0; i < request.messages().size(); i++) {
+            ChatMessage msg = request.messages().get(i);
             JsonObject m = new JsonObject();
             m.addProperty("role", msg.role());
-            m.addProperty("content", msg.content());
+            // Only the LAST user message carries the document blocks
+            // on the non-stateful path — no replay, single shot.
+            if (i == lastUserIndex && !attachmentFileIds.isEmpty()) {
+                m.add("content", buildContentWithDocuments(msg.content(), attachmentFileIds));
+            } else {
+                m.addProperty("content", msg.content());
+            }
             messages.add(m);
         }
         body.add("messages", messages);
@@ -178,6 +196,11 @@ public class AnthropicClient implements LlmClient {
                     .header("Content-Type", "application/json")
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", "2023-06-01")
+                    // files-api-2025-04-14 enables the document/file
+                    // content block. Harmless to include when no
+                    // attachments are present — the API accepts but
+                    // doesn't require it in that case.
+                    .header("anthropic-beta", "files-api-2025-04-14")
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
@@ -221,10 +244,24 @@ public class AnthropicClient implements LlmClient {
             state.systemInstruction = request.systemInstruction();
         }
 
+        // Pin any newly-supplied attachments to the conversation
+        // state so future turns' replayed history still sees the
+        // document blocks. Only the first call typically supplies
+        // attachments; later calls pass an empty list.
+        if (request.attachments() != null && !request.attachments().isEmpty()
+                && state.pinnedAttachments.isEmpty()) {
+            state.pinnedAttachments.addAll(request.attachments());
+        }
+
         // Add new messages to history
         for (ChatMessage msg : request.messages()) {
             state.messages.add(msg);
         }
+
+        // Resolve pinned attachments to Anthropic file_ids (hits the
+        // FileUploader cache on every turn after the first, so this
+        // costs one HTTP round-trip per unique file per app lifetime).
+        List<String> attachmentFileIds = resolveAttachmentIds(state.pinnedAttachments);
 
         // Build the full request with accumulated conversation
         JsonObject body = new JsonObject();
@@ -236,10 +273,20 @@ public class AnthropicClient implements LlmClient {
         }
 
         JsonArray messages = new JsonArray();
-        for (ChatMessage msg : state.messages) {
+        // Attach document blocks to the FIRST user message of the
+        // replayed history. That way the model reads them before its
+        // first response is conceptually "constructed", and later
+        // turns don't carry duplicated document blocks.
+        int firstUserIndex = firstUserMessageIndex(state.messages);
+        for (int i = 0; i < state.messages.size(); i++) {
+            ChatMessage msg = state.messages.get(i);
             JsonObject m = new JsonObject();
             m.addProperty("role", msg.role());
-            m.addProperty("content", msg.content());
+            if (i == firstUserIndex && !attachmentFileIds.isEmpty()) {
+                m.add("content", buildContentWithDocuments(msg.content(), attachmentFileIds));
+            } else {
+                m.addProperty("content", msg.content());
+            }
             messages.add(m);
         }
         body.add("messages", messages);
@@ -250,6 +297,7 @@ public class AnthropicClient implements LlmClient {
                     .header("Content-Type", "application/json")
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", "2023-06-01")
+                    .header("anthropic-beta", "files-api-2025-04-14")
                     .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                     .build();
 
@@ -280,6 +328,70 @@ public class AnthropicClient implements LlmClient {
         } catch (Exception e) {
             return new StatefulResponse("[Claude ERROR] " + e.getMessage(), null);
         }
+    }
+
+    // ============================================================
+    // resolveAttachmentIds() — Uploads every FileAttachment (cache-hits
+    // after the first call) and collects the returned file_ids. Any
+    // attachment type we don't yet understand (future RagCorpus /
+    // McpServer types) is silently skipped — the sealed interface's
+    // other permits don't exist yet, but this switch is ready for
+    // them. Null/empty inputs return an empty list.
+    // ============================================================
+    private List<String> resolveAttachmentIds(List<ContextAttachment> atts) {
+        if (atts == null || atts.isEmpty()) return List.of();
+        List<String> ids = new ArrayList<>();
+        for (ContextAttachment a : atts) {
+            if (a instanceof FileAttachment fa) {
+                FileUploader.UploadedRef ref = FileUploader.ensureUploaded(
+                        Provider.ANTHROPIC, fa, apiKey, httpClient);
+                if (ref != null && ref.ref() != null) {
+                    ids.add(ref.ref());
+                }
+            }
+        }
+        return ids;
+    }
+
+    private static int lastUserMessageIndex(List<ChatMessage> msgs) {
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            if ("user".equals(msgs.get(i).role())) return i;
+        }
+        return -1;
+    }
+
+    private static int firstUserMessageIndex(List<ChatMessage> msgs) {
+        for (int i = 0; i < msgs.size(); i++) {
+            if ("user".equals(msgs.get(i).role())) return i;
+        }
+        return -1;
+    }
+
+    // ============================================================
+    // buildContentWithDocuments() — Upgrades a single user-message
+    // content from a plain string to an array of content blocks:
+    //   [{type:"document", source:{type:"file", file_id:"…"}}, ...,
+    //    {type:"text", text:"…"}]
+    // Claude's content array accepts any mix of block types; text
+    // goes last by convention so the user's prompt reads as the
+    // final instruction after the documents.
+    // ============================================================
+    private static JsonArray buildContentWithDocuments(String text, List<String> fileIds) {
+        JsonArray blocks = new JsonArray();
+        for (String id : fileIds) {
+            JsonObject doc = new JsonObject();
+            doc.addProperty("type", "document");
+            JsonObject src = new JsonObject();
+            src.addProperty("type", "file");
+            src.addProperty("file_id", id);
+            doc.add("source", src);
+            blocks.add(doc);
+        }
+        JsonObject t = new JsonObject();
+        t.addProperty("type", "text");
+        t.addProperty("text", text == null ? "" : text);
+        blocks.add(t);
+        return blocks;
     }
 
     // ============================================================

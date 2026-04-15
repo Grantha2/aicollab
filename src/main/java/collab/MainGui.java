@@ -208,6 +208,14 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         profileCombo.addActionListener(e -> onProfileComboChanged());
         JButton runButton = new JButton("Run Debate");
         runButton.addActionListener(e -> onRunDebate());
+        // Phase A: debate-level file attachments. The button opens a
+        // tiny manager dialog that lists what's attached and lets the
+        // user add or remove files. Attachments are persisted on the
+        // active profile set so reopening the same profile keeps them.
+        JButton attachBtn = new JButton("Attach Files\u2026");
+        attachBtn.setToolTipText(
+                "Attach documents (PDF / text) that every panelist will read on Phase 1.");
+        attachBtn.addActionListener(e -> onManageAttachments());
 
         debateToolbar.add(new JLabel("Stakeholder:"));
         debateToolbar.add(stakeholderCombo);
@@ -215,8 +223,40 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         debateToolbar.add(new JLabel("Profile:"));
         debateToolbar.add(profileCombo);
         debateToolbar.add(Box.createHorizontalStrut(8));
+        debateToolbar.add(attachBtn);
+        debateToolbar.add(Box.createHorizontalStrut(8));
         debateToolbar.add(runButton);
         return debateToolbar;
+    }
+
+    // ============================================================
+    // onManageAttachments() — Opens a file-attachment manager dialog
+    // for the active profile set. Changes are written back to the
+    // profile set JSON via profileLibrary.saveSet(...) and the
+    // Maestro is rebuilt so the next debate picks up the new list.
+    // ============================================================
+    private void onManageAttachments() {
+        if (activeProfileSet == null) {
+            statusLabel.setText("No active profile set.");
+            return;
+        }
+        AttachmentsDialog dlg = new AttachmentsDialog(this, activeProfileSet.getAttachments());
+        dlg.setVisible(true);
+        if (!dlg.isConfirmed()) return;
+
+        activeProfileSet.setAttachments(dlg.getAttachments());
+        try {
+            profileLibrary.saveSet(activeProfileSet, activeProfileSet.getName());
+            // Rebuild so the Maestro's attachment list reflects the edit.
+            rebuildMaestro();
+            int n = activeProfileSet.getAttachments().size();
+            statusLabel.setText(n == 0
+                    ? "Attachments cleared."
+                    : "Attached " + n + " file" + (n == 1 ? "" : "s") + " to \""
+                            + activeProfileSet.getName() + "\".");
+        } catch (Exception ex) {
+            statusLabel.setText("Failed to save attachments: " + ex.getMessage());
+        }
     }
 
     /**
@@ -578,6 +618,10 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
                 promptBuilder, conversationContext,
                 config.getDebateRounds(), maxTokens, sessionStore, apiRequestLog);
         maestro.setDebateListener(this);
+        // Debate-level attachments travel on the Maestro so Phase 1
+        // LlmRequests carry them; chained turns (Phase 2/3) rely on
+        // provider/client state to retain file references from Phase 1.
+        maestro.setAttachments(activeProfileSet.getAttachments());
 
         // Rebuild the per-slot stream grid so the UI matches the panel
         // composition. Safe to call repeatedly — it clears and re-adds.
