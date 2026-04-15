@@ -81,7 +81,7 @@ public class ApiRequestViewerDialog extends JDialog {
                 + "<b>About request state:</b> "
                 + "<b>Anthropic (Claude)</b> uses client-side history \u2014 full prior messages are resent each turn. "
                 + "<b>OpenAI (GPT)</b> uses server-side state via the Responses API \u2014 chained turns send only the new user message plus <code>previous_response_id</code>. "
-                + "<b>Google (Gemini)</b> is currently stateless \u2014 each request carries only the latest user message (known limitation; context from earlier phases is not included)."
+                + "<b>Google (Gemini)</b> uses server-side state via the Interactions API (beta) \u2014 chained turns send only the new user message plus <code>previous_interaction_id</code>; <code>system_instruction</code> is re-submitted each turn (interaction-scoped). Falls back to stateless <code>generateContent</code> on Interactions API errors."
                 + "</body></html>");
         help.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createMatteBorder(0, 0, 1, 0, UIManager.getColor("Separator.foreground")),

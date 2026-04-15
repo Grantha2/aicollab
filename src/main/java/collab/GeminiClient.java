@@ -12,14 +12,20 @@ package collab;
 // that this one talks to Google.
 //
 // HOW GEMINI DIFFERS FROM CLAUDE AND GPT:
-//   - Auth: API key goes IN THE URL as a query parameter, not in a header!
-//     This is an older authentication pattern. Google is the odd one out.
-//   - Request JSON uses "contents" and "parts" (not "messages").
-//     Every API has its own dialect — this is normal.
+//   - Auth: API key goes IN THE URL as a query parameter, not in a header
+//     (for the legacy generateContent path). The newer Interactions API
+//     used by sendStateful() uses an "x-goog-api-key" header instead —
+//     so this file uses BOTH auth styles, one per endpoint.
+//   - Request JSON uses "contents" and "parts" (not "messages") for
+//     generateContent; the Interactions API uses "input" with "role"/
+//     "content" objects instead. Two different dialects in one file.
 //   - Token limit: "maxOutputTokens" inside a "generationConfig" block
-//     (not a top-level field like the other two)
-//   - Response path: candidates[0].content.parts[0].text
-//   - The URL includes the model name (not just a body parameter)
+//     for generateContent, "max_output_tokens" inside "generation_config"
+//     for Interactions — snake_case vs camelCase, yes, really.
+//   - Response path (generateContent): candidates[0].content.parts[0].text
+//   - Response path (Interactions):    outputs[last-with-type=text].text
+//   - The generateContent URL includes the model name; the Interactions
+//     URL does not (model goes in the body).
 //
 // LEARN BY PATTERN:
 // Same three-step structure as the other clients. Compare the JSON
@@ -33,8 +39,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.concurrent.ConcurrentHashMap;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 public class GeminiClient implements LlmClient {
 
@@ -55,6 +63,21 @@ public class GeminiClient implements LlmClient {
 
     // NOTE: No apiUrl field — Gemini's URL is built dynamically because
     // the model name and API key are embedded in the URL itself.
+
+    // Cache of system instructions keyed by Interactions-API stateId.
+    //
+    // WHY: The Interactions API treats `system_instruction`,
+    // `generation_config`, and `tools` as INTERACTION-SCOPED — they are
+    // NOT carried forward by `previous_interaction_id`. Our Maestro sets
+    // systemInstruction=null on Phase 2+ chained turns (relying on the
+    // provider to retain it, which OpenAI/Anthropic do). Gemini does not.
+    // We therefore cache the first-turn system instruction here and
+    // re-submit it on every chained call. The stateId used as the key is
+    // the one returned from the PREVIOUS turn; we move the entry forward
+    // to the new stateId on each successful chain and remove the old key
+    // to bound memory — mirrors AnthropicClient's conversation map.
+    private final ConcurrentHashMap<String, String> systemInstructionByStateId
+            = new ConcurrentHashMap<>();
 
     // ============================================================
     // Constructor — same pattern, but no URL parameter.
@@ -203,22 +226,168 @@ public class GeminiClient implements LlmClient {
 
 
     // ============================================================
-    // sendStateful() — Stateless delegate.
+    // sendStateful() — Server-side state via the Gemini Interactions
+    // API (BETA: v1beta/interactions).
     //
-    // Google's Gemini API does NOT expose a stateful conversation
-    // endpoint (no "interactions" API exists at v1beta/interactions —
-    // that URL returns errors and burns a round-trip). Stateful
-    // conversation with Gemini is emulated client-side by resending
-    // the full message history through generateContent, which the
-    // Maestro already accumulates in the LlmRequest it passes in.
+    // WHY THIS EXISTS:
+    // The Maestro passes `systemInstruction=null` and only the new
+    // user turn on Phase 2+ requests, relying on the provider to
+    // carry conversation history. OpenAI does that via
+    // `previous_response_id`; Anthropic fakes it with a client-side
+    // message accumulator. Gemini's generateContent is stateless —
+    // so without this method, every Gemini Phase 2+ turn would see
+    // only the fresh user message, losing Phase 1 context and the
+    // agent-identity system instruction entirely.
     //
-    // We therefore delegate to the stateless sendMessage(LlmRequest)
-    // path (which now has retry + timeout) and return a null state ID
-    // so the Maestro keeps passing full history on each turn.
+    // The Interactions API gives us server-side chaining via
+    // `previous_interaction_id`. Per Google's docs, that ID carries
+    // ONLY the conversation history; `system_instruction` and
+    // `generation_config` are interaction-scoped and must be
+    // re-submitted every turn. We therefore cache the first-turn
+    // system instruction in `systemInstructionByStateId` and
+    // re-attach it on every chained call.
+    //
+    // WIRE SHAPE:
+    //   POST https://generativelanguage.googleapis.com/v1beta/interactions
+    //   Header: x-goog-api-key: <KEY>
+    //   Body (first turn):
+    //     { "model":"…", "system_instruction":"…",
+    //       "input":[{"role":"user","content":"…"}, …],
+    //       "generation_config":{"max_output_tokens":N},
+    //       "store":true }
+    //   Body (chained turn):
+    //     { "model":"…", "system_instruction":"…",
+    //       "previous_interaction_id":"…",
+    //       "input":"…new user turn…",
+    //       "generation_config":{"max_output_tokens":N},
+    //       "store":true }
+    //   Response: { "id":"…", "outputs":[{"type":"text","text":"…"}, …] }
+    //
+    // BETA CAVEAT:
+    // Google explicitly recommends generateContent for production
+    // workloads — Interactions schemas may change. On any non-200
+    // response or exception we fall back to the stateless
+    // sendMessage(LlmRequest) path and return a null stateId, which
+    // Maestro already tolerates (it just means "no chaining available
+    // for the next turn"), so behaviour silently reverts to today's
+    // baseline rather than breaking the debate.
     // ============================================================
     @Override
     public StatefulResponse sendStateful(LlmRequest request, String previousStateId) {
-        return new StatefulResponse(sendMessage(request), null);
+        try {
+            // Resolve the system instruction for this turn:
+            //  - First turn: take from the request (may be null/empty).
+            //  - Chained turn: use the one we cached when the previous
+            //    interaction was created. If the cache miss (first-ever
+            //    chained turn after a restart, etc.), the request's own
+            //    systemInstruction is the next best thing.
+            String systemInstr;
+            if (previousStateId == null) {
+                systemInstr = request.systemInstruction();
+            } else {
+                String cached = systemInstructionByStateId.get(previousStateId);
+                systemInstr = cached != null ? cached : request.systemInstruction();
+            }
+
+            JsonObject body = new JsonObject();
+            body.addProperty("model", modelName);
+            body.addProperty("store", true);
+
+            if (systemInstr != null && !systemInstr.isEmpty()) {
+                // REST examples in the Interactions docs pass
+                // system_instruction as a plain string; the API accepts
+                // that form directly.
+                body.addProperty("system_instruction", systemInstr);
+            }
+
+            if (previousStateId == null) {
+                // First turn — send the conversation as an input array
+                // of role+content objects. Map "assistant" → "model"
+                // the same way the stateless sendMessage(LlmRequest)
+                // path already does.
+                JsonArray input = new JsonArray();
+                for (ChatMessage msg : request.messages()) {
+                    JsonObject entry = new JsonObject();
+                    String role = "assistant".equals(msg.role()) ? "model" : msg.role();
+                    entry.addProperty("role", role);
+                    entry.addProperty("content", msg.content());
+                    input.add(entry);
+                }
+                body.add("input", input);
+            } else {
+                // Chained turn — server has prior context. Send only
+                // the latest user message as a plain string plus the
+                // previous interaction id.
+                body.addProperty("previous_interaction_id", previousStateId);
+                body.addProperty("input", request.messages().getLast().content());
+            }
+
+            JsonObject genConfig = new JsonObject();
+            genConfig.addProperty("max_output_tokens", request.maxTokens());
+            body.add("generation_config", genConfig);
+
+            HttpRequest httpReq = HttpRequest.newBuilder()
+                    .uri(URI.create("https://generativelanguage.googleapis.com/v1beta/interactions"))
+                    .header("Content-Type", "application/json")
+                    .header("x-goog-api-key", apiKey)
+                    .timeout(REQUEST_TIMEOUT)
+                    .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                    .build();
+
+            HttpResponse<String> response = sendWithRetry(httpReq);
+            if (response == null || response.statusCode() != 200) {
+                // Beta endpoint flaked — fall back so the debate keeps
+                // going. Null stateId means Maestro will resend full
+                // state next turn (which it won't actually do today
+                // for Gemini, but that matches the pre-migration
+                // behaviour exactly).
+                return new StatefulResponse(sendMessage(request), null);
+            }
+
+            JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
+            String newStateId = root.has("id") && !root.get("id").isJsonNull()
+                    ? root.get("id").getAsString()
+                    : null;
+
+            // Extract text: outputs[] may include thought blocks or
+            // tool-call blocks — pick the LAST block with type=="text",
+            // matching the pattern shown in Google's own examples
+            // (`outputs[-1].text`) when only text is expected.
+            String text = null;
+            if (root.has("outputs") && root.get("outputs").isJsonArray()) {
+                JsonArray outputs = root.getAsJsonArray("outputs");
+                for (int i = outputs.size() - 1; i >= 0; i--) {
+                    JsonObject out = outputs.get(i).getAsJsonObject();
+                    String type = out.has("type") ? out.get("type").getAsString() : null;
+                    if ("text".equals(type) && out.has("text")) {
+                        text = out.get("text").getAsString();
+                        break;
+                    }
+                }
+            }
+            if (text == null) {
+                // Couldn't find a text block — treat as a soft failure
+                // and fall back rather than returning empty.
+                return new StatefulResponse(sendMessage(request), null);
+            }
+
+            // Move the cached system instruction forward so the next
+            // chained turn can re-submit it, and drop the old key to
+            // bound memory (same lifecycle AnthropicClient uses).
+            if (newStateId != null && systemInstr != null && !systemInstr.isEmpty()) {
+                systemInstructionByStateId.put(newStateId, systemInstr);
+            }
+            if (previousStateId != null) {
+                systemInstructionByStateId.remove(previousStateId);
+            }
+
+            return new StatefulResponse(text, newStateId);
+
+        } catch (Exception e) {
+            // Any parse error, malformed JSON, or unexpected shape —
+            // degrade gracefully to the stateless path.
+            return new StatefulResponse(sendMessage(request), null);
+        }
     }
 
     // ============================================================
