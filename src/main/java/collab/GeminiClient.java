@@ -39,6 +39,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -179,8 +181,15 @@ public class GeminiClient implements LlmClient {
             body.add("system_instruction", sysInstr);
         }
 
+        // Resolve attachments to fileData refs (URIs) up-front so the
+        // LAST user message can carry them inline in its parts array.
+        List<FileUploader.UploadedRef> attachmentRefs =
+                resolveAttachmentRefs(request.attachments());
+        int lastUserIdx = lastUserMessageIndex(request.messages());
+
         JsonArray contents = new JsonArray();
-        for (ChatMessage msg : request.messages()) {
+        for (int i = 0; i < request.messages().size(); i++) {
+            ChatMessage msg = request.messages().get(i);
             JsonObject entry = new JsonObject();
             String geminiRole = msg.role().equals("assistant") ? "model" : msg.role();
             entry.addProperty("role", geminiRole);
@@ -189,6 +198,11 @@ public class GeminiClient implements LlmClient {
             JsonObject part = new JsonObject();
             part.addProperty("text", msg.content());
             parts.add(part);
+            if (i == lastUserIdx) {
+                for (FileUploader.UploadedRef ref : attachmentRefs) {
+                    parts.add(fileDataPart(ref));
+                }
+            }
             entry.add("parts", parts);
 
             contents.add(entry);
@@ -300,17 +314,40 @@ public class GeminiClient implements LlmClient {
                 body.addProperty("system_instruction", systemInstr);
             }
 
+            // Resolve attachments only on the first turn — Google's
+            // Interactions server retains the file references across
+            // previous_interaction_id chaining, so chained turns can
+            // keep the small "just the new prompt" shape.
+            List<FileUploader.UploadedRef> attachmentRefs = previousStateId == null
+                    ? resolveAttachmentRefs(request.attachments())
+                    : List.of();
+
             if (previousStateId == null) {
-                // First turn — send the conversation as an input array
-                // of role+content objects. Map "assistant" → "model"
-                // the same way the stateless sendMessage(LlmRequest)
-                // path already does.
+                // First turn — send the conversation as an input array.
+                // If attachments are present on the LAST user message,
+                // we promote that entry from {role,content:string} to
+                // {role, parts:[{text…}, {fileData…}]} so the model
+                // can actually read the file. Other entries stay in
+                // the simple string shape to minimise wire changes.
+                int lastUserIndex = lastUserMessageIndex(request.messages());
                 JsonArray input = new JsonArray();
-                for (ChatMessage msg : request.messages()) {
+                for (int i = 0; i < request.messages().size(); i++) {
+                    ChatMessage msg = request.messages().get(i);
                     JsonObject entry = new JsonObject();
                     String role = "assistant".equals(msg.role()) ? "model" : msg.role();
                     entry.addProperty("role", role);
-                    entry.addProperty("content", msg.content());
+                    if (i == lastUserIndex && !attachmentRefs.isEmpty()) {
+                        JsonArray parts = new JsonArray();
+                        JsonObject textPart = new JsonObject();
+                        textPart.addProperty("text", msg.content());
+                        parts.add(textPart);
+                        for (FileUploader.UploadedRef ref : attachmentRefs) {
+                            parts.add(fileDataPart(ref));
+                        }
+                        entry.add("parts", parts);
+                    } else {
+                        entry.addProperty("content", msg.content());
+                    }
                     input.add(entry);
                 }
                 body.add("input", input);
@@ -452,6 +489,51 @@ public class GeminiClient implements LlmClient {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    // ============================================================
+    // resolveAttachmentRefs() — Uploads every FileAttachment (or hits
+    // the cache on subsequent turns) and returns Gemini fileUri refs
+    // paired with their server-echoed MIME type. Non-File attachments
+    // (future RAG/MCP types) are silently skipped. Empty input →
+    // empty list, so downstream for-loops no-op cleanly.
+    // ============================================================
+    private List<FileUploader.UploadedRef> resolveAttachmentRefs(List<ContextAttachment> atts) {
+        if (atts == null || atts.isEmpty()) return List.of();
+        List<FileUploader.UploadedRef> refs = new ArrayList<>();
+        for (ContextAttachment a : atts) {
+            if (a instanceof FileAttachment fa) {
+                FileUploader.UploadedRef ref = FileUploader.ensureUploaded(
+                        Provider.GOOGLE, fa, apiKey, httpClient);
+                if (ref != null && ref.ref() != null) {
+                    refs.add(ref);
+                }
+            }
+        }
+        return refs;
+    }
+
+    private static int lastUserMessageIndex(List<ChatMessage> msgs) {
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            if ("user".equals(msgs.get(i).role())) return i;
+        }
+        return -1;
+    }
+
+    // ============================================================
+    // fileDataPart() — Builds a {"fileData":{"mimeType":…,"fileUri":…}}
+    // part entry from an uploaded ref. This is the Gemini-native way
+    // to reference a previously-uploaded file in a generateContent
+    // or Interactions request body.
+    // ============================================================
+    private static JsonObject fileDataPart(FileUploader.UploadedRef ref) {
+        JsonObject part = new JsonObject();
+        JsonObject fileData = new JsonObject();
+        fileData.addProperty("mimeType",
+                ref.mimeType() == null ? "application/octet-stream" : ref.mimeType());
+        fileData.addProperty("fileUri", ref.ref());
+        part.add("fileData", fileData);
+        return part;
     }
 
     // --- Utility methods (duplicated for self-containment — see AnthropicClient for full comments) ---

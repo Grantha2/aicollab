@@ -57,6 +57,12 @@ public class Maestro {
     // How many rounds of cross-reaction in Phase 2.
     private final int debateRounds;
 
+    // Debate-level file attachments. Only injected on Phase 1 turns
+    // (the first call per panelist) — chained Phase 2/3 turns rely on
+    // provider-retained or client-replayed state to carry the files
+    // forward. See each LlmClient for provider-specific realisation.
+    private List<ContextAttachment> attachments = List.of();
+
     // ============================================================
     // Legacy 3-panel constructors (backwards compat for callers that
     // haven't been migrated to the slot-list API yet). They synthesize
@@ -135,6 +141,20 @@ public class Maestro {
         this.listener = listener;
     }
 
+    /**
+     * Replaces the set of debate-level attachments. The list is copied
+     * and normalised to non-null; callers can pass null for "clear all".
+     * Applied on the NEXT runDebate() — an in-flight debate keeps the
+     * attachments it started with.
+     */
+    public void setAttachments(List<? extends ContextAttachment> attachments) {
+        if (attachments == null || attachments.isEmpty()) {
+            this.attachments = List.of();
+        } else {
+            this.attachments = List.copyOf(attachments);
+        }
+    }
+
     public List<PanelistSlot> getSlots() {
         return slots;
     }
@@ -206,7 +226,8 @@ public class Maestro {
             LlmRequest req = new LlmRequest(
                     promptBuilder.buildSystemInstruction(agent, activeStakeholder),
                     List.of(new ChatMessage("user", promptBuilder.buildPhase1UserMessage(userPrompt))),
-                    configuredMaxTokens);
+                    configuredMaxTokens,
+                    attachments);
             logRequest(cycle, "phase1", displayName, slot.providerKey(), req, null);
             StatefulResponse r = clients.get(i).sendStateful(req, null);
             String text = r.text();

@@ -31,6 +31,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.List;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -193,13 +195,30 @@ public class OpenAiClient implements LlmClient {
                 body.addProperty("instructions", request.systemInstruction());
             }
 
+            // Resolve attachments -> file_ids once. On the first turn
+            // we splice input_file blocks into the new user message's
+            // content array; on chained turns the server retains the
+            // file context from the first turn, so we pass text only
+            // to keep the request small.
+            List<String> attachmentFileIds = previousStateId == null
+                    ? resolveAttachmentIds(request.attachments())
+                    : List.of();
+
             if (previousStateId == null) {
-                // First call — send full conversation as input array
+                // First call — send full conversation as input array.
+                // The LAST user message carries any input_file blocks.
                 JsonArray input = new JsonArray();
-                for (ChatMessage msg : request.messages()) {
+                int lastUserIdx = lastUserMessageIndex(request.messages());
+                for (int i = 0; i < request.messages().size(); i++) {
+                    ChatMessage msg = request.messages().get(i);
                     JsonObject m = new JsonObject();
                     m.addProperty("role", msg.role());
-                    m.addProperty("content", msg.content());
+                    if (i == lastUserIdx && !attachmentFileIds.isEmpty()) {
+                        m.add("content", buildResponsesContentWithFiles(
+                                msg.content(), attachmentFileIds));
+                    } else {
+                        m.addProperty("content", msg.content());
+                    }
                     input.add(m);
                 }
                 body.add("input", input);
@@ -242,6 +261,65 @@ public class OpenAiClient implements LlmClient {
             String fallback = sendMessage(request);
             return new StatefulResponse(fallback, null);
         }
+    }
+
+    // ============================================================
+    // resolveAttachmentIds() — Uploads every FileAttachment (cache-hit
+    // after the first call) and collects the OpenAI file_ids. Any
+    // future non-File attachment type (RAG / MCP) is ignored here.
+    //
+    // NOTE ON /v1/chat/completions: The sendMessage(LlmRequest) path
+    // above targets chat completions, which does NOT accept
+    // input_file blocks — it only supports image_url for non-text.
+    // We therefore don't thread attachments into that path; the
+    // stateful Responses API path below is where files live.
+    // ============================================================
+    private List<String> resolveAttachmentIds(List<ContextAttachment> atts) {
+        if (atts == null || atts.isEmpty()) return List.of();
+        List<String> ids = new ArrayList<>();
+        for (ContextAttachment a : atts) {
+            if (a instanceof FileAttachment fa) {
+                FileUploader.UploadedRef ref = FileUploader.ensureUploaded(
+                        Provider.OPENAI, fa, apiKey, httpClient);
+                if (ref != null && ref.ref() != null) {
+                    ids.add(ref.ref());
+                }
+            }
+        }
+        return ids;
+    }
+
+    private static int lastUserMessageIndex(List<ChatMessage> msgs) {
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            if ("user".equals(msgs.get(i).role())) return i;
+        }
+        return -1;
+    }
+
+    // ============================================================
+    // buildResponsesContentWithFiles() — Upgrades a single message's
+    // content from a plain string to the Responses API's content-array
+    // shape:
+    //   [{type:"input_text", text:"…"},
+    //    {type:"input_file", file_id:"file-…"}, …]
+    // file blocks go AFTER the text so the user's prompt reads first;
+    // OpenAI's examples use either ordering but this keeps parity with
+    // Anthropic's "text-last" convention isn't important — the model
+    // reads both regardless.
+    // ============================================================
+    private static JsonArray buildResponsesContentWithFiles(String text, List<String> fileIds) {
+        JsonArray blocks = new JsonArray();
+        JsonObject t = new JsonObject();
+        t.addProperty("type", "input_text");
+        t.addProperty("text", text == null ? "" : text);
+        blocks.add(t);
+        for (String id : fileIds) {
+            JsonObject f = new JsonObject();
+            f.addProperty("type", "input_file");
+            f.addProperty("file_id", id);
+            blocks.add(f);
+        }
+        return blocks;
     }
 
     // --- Utility methods (duplicated for self-containment — see AnthropicClient for full comments) ---
