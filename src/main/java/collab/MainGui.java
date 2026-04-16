@@ -517,6 +517,10 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
             taskRegistry.register(new InitiativeReviewTask(initiativeStore));
             taskRegistry.register(new WeeklyReportTask());
             taskRegistry.register(new StakeholderBriefingTask());
+            // Agentic room-reservation workflow — intent dialog +
+            // tool-calling Claude turn that checks availability, fills
+            // the RSO request PDF, and drafts the confirmation email.
+            taskRegistry.register(new collab.workflows.RoomReservationWorkflow());
 
             // Register user-defined workflows
             for (WorkflowDefinition wd : workflowStore.getAll()) {

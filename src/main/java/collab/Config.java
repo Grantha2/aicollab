@@ -71,8 +71,21 @@ public class Config {
 
     public String getGeminiKey()   { return props.getProperty("gemini.key"); }
     public String getGeminiModel() { return props.getProperty("gemini.model", "gemini-3.1-pro-preview"); }
-    
-   
+
+    // ============================================================
+    // getProperty() — Generic escape hatch for ad-hoc config keys.
+    //
+    // Used by workflows (e.g. RoomReservationWorkflow) to read
+    // feature-specific settings (`computer.use.sandbox.url`,
+    // `room.availability.mode`) without having to add a typed getter
+    // for every new key. The default value is returned when the key
+    // is missing or blank, so callers never need a null-check.
+    // ============================================================
+    public String getProperty(String key, String defaultValue) {
+        String v = props.getProperty(key);
+        return (v == null || v.isBlank()) ? defaultValue : v;
+    }
+
 
     // --- TUNING PARAMETERS ---
     // These control how the debate works. Defaults are sensible;
