@@ -108,4 +108,31 @@ public interface LlmClient {
         String text = sendMessage(request);
         return new StatefulResponse(text, null);
     }
+
+    // ============================================================
+    // sendStateful() with a ToolExecutor — the tool-use path.
+    //
+    // When the request carries tool schemas AND the caller provides
+    // a non-null ToolExecutor, the client is expected to:
+    //   1. Serialise the tools into its provider-specific tools array.
+    //   2. Send the turn.
+    //   3. If the provider returns a tool-use / function-call block,
+    //      invoke executor.executeAll(calls), append the results to
+    //      the same stateful conversation, and continue requesting
+    //      text from the model.
+    //   4. Loop until the provider returns plain text or the call
+    //      count exceeds ToolExecutor.DEFAULT_MAX_ITERATIONS.
+    //
+    // The default implementation falls through to the no-tool path,
+    // so any client that has not yet implemented tool-calling keeps
+    // compiling and behaves identically to today. Clients that DO
+    // implement the loop override this method. This is the same
+    // pattern as the sendMessage(LlmRequest) -> sendMessage(String)
+    // fall-through above: additive, opt-in, never-breaking.
+    // ============================================================
+    default StatefulResponse sendStateful(LlmRequest request,
+                                          String previousStateId,
+                                          ToolExecutor executor) {
+        return sendStateful(request, previousStateId);
+    }
 }

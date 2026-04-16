@@ -34,8 +34,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import com.google.gson.Gson;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import java.util.LinkedHashMap;
 
 public class AnthropicClient implements LlmClient {
 
@@ -491,5 +495,263 @@ public class AnthropicClient implements LlmClient {
         extracted = extracted.replace("\\\\", "\\");
 
         return extracted;
+    }
+
+    // ============================================================
+    // sendStateful() WITH TOOL EXECUTOR — the tool-use loop.
+    //
+    // WHAT THIS METHOD DOES (one sentence):
+    // Runs a Claude conversation turn with tools available, looping
+    // until Claude produces a final text response or the iteration
+    // cap (ToolExecutor.DEFAULT_MAX_ITERATIONS) is exceeded.
+    //
+    // WHY A SEPARATE METHOD (instead of extending sendStateful):
+    // The tool loop adds ~150 lines of parsing and re-entry logic
+    // that are dead weight for non-tool debates. Keeping the original
+    // sendStateful intact means the common case (no tools) runs the
+    // exact same code path it ran before tool-calling landed.
+    //
+    // CLAUDE'S TOOL-USE PROTOCOL (what we handle here):
+    //   Request: body.tools = [{name, description, input_schema}]
+    //   Response: content can mix text blocks and tool_use blocks.
+    //     - { "type": "text", "text": "…" }
+    //     - { "type": "tool_use", "id": "tu_…", "name": "…", "input": {…} }
+    //   If stop_reason == "tool_use", we must append a user message
+    //   with one tool_result block per tool_use id (same id echoed
+    //   back), then request the next turn. Claude continues from
+    //   where it left off.
+    //
+    // FALLBACK: If executor is null or request.tools() is empty, we
+    // delegate to the non-tool sendStateful so the plain debate path
+    // is untouched.
+    // ============================================================
+    @Override
+    public StatefulResponse sendStateful(LlmRequest request,
+                                         String previousStateId,
+                                         ToolExecutor executor) {
+        if (executor == null || request.tools() == null || request.tools().isEmpty()) {
+            return sendStateful(request, previousStateId);
+        }
+
+        // Resolve or create conversation state — identical bookkeeping
+        // to the non-tool sendStateful, duplicated intentionally so the
+        // two paths can diverge without risk of breaking each other.
+        ConversationState state;
+        if (previousStateId != null && conversations.containsKey(previousStateId)) {
+            state = conversations.get(previousStateId);
+        } else {
+            state = new ConversationState();
+        }
+        if (request.systemInstruction() != null && !request.systemInstruction().isEmpty()) {
+            state.systemInstruction = request.systemInstruction();
+        }
+        if (request.attachments() != null && !request.attachments().isEmpty()
+                && state.pinnedAttachments.isEmpty()) {
+            state.pinnedAttachments.addAll(request.attachments());
+        }
+        for (ChatMessage msg : request.messages()) {
+            state.messages.add(msg);
+        }
+
+        // `assistantTurns` collects assistant content blocks (text +
+        // tool_use) across loop iterations so each successive request
+        // replays them correctly. Because ChatMessage.content() is a
+        // plain string, we keep the richer structure as JsonArrays
+        // here and splice them directly into the request body instead
+        // of round-tripping through ChatMessage on tool-use turns.
+        List<JsonArray> assistantTurns = new ArrayList<>();
+        List<JsonArray> toolResultTurns = new ArrayList<>();
+
+        List<String> attachmentFileIds = resolveAttachmentIds(state.pinnedAttachments);
+
+        String finalText = "";
+        int iteration = 0;
+        try {
+            while (iteration < ToolExecutor.DEFAULT_MAX_ITERATIONS) {
+                iteration++;
+
+                // Build the request with accumulated state + tools.
+                JsonObject body = new JsonObject();
+                body.addProperty("model", modelName);
+                body.addProperty("max_tokens", request.maxTokens());
+                if (state.systemInstruction != null && !state.systemInstruction.isEmpty()) {
+                    body.addProperty("system", state.systemInstruction);
+                }
+                body.add("tools", serializeTools(request.tools()));
+
+                JsonArray messages = new JsonArray();
+                int firstUserIndex = firstUserMessageIndex(state.messages);
+                // Replay the same text messages as the non-tool path.
+                // Any assistant tool_use + user tool_result pairs from
+                // earlier iterations are spliced in after the initial
+                // user message.
+                int assistantIdx = 0;
+                int toolResultIdx = 0;
+                for (int i = 0; i < state.messages.size(); i++) {
+                    ChatMessage msg = state.messages.get(i);
+                    JsonObject m = new JsonObject();
+                    m.addProperty("role", msg.role());
+                    if (i == firstUserIndex && !attachmentFileIds.isEmpty()) {
+                        m.add("content", buildContentWithDocuments(msg.content(), attachmentFileIds));
+                    } else {
+                        m.addProperty("content", msg.content());
+                    }
+                    messages.add(m);
+                }
+                // Splice in past assistant/user tool pairs.
+                while (assistantIdx < assistantTurns.size()
+                        && toolResultIdx < toolResultTurns.size()) {
+                    JsonObject a = new JsonObject();
+                    a.addProperty("role", "assistant");
+                    a.add("content", assistantTurns.get(assistantIdx++));
+                    messages.add(a);
+                    JsonObject u = new JsonObject();
+                    u.addProperty("role", "user");
+                    u.add("content", toolResultTurns.get(toolResultIdx++));
+                    messages.add(u);
+                }
+                // If the last assistant turn had tool_use without a
+                // matching tool_result yet (shouldn't happen post-loop,
+                // but guard anyway), it is spliced without a follower.
+                while (assistantIdx < assistantTurns.size()) {
+                    JsonObject a = new JsonObject();
+                    a.addProperty("role", "assistant");
+                    a.add("content", assistantTurns.get(assistantIdx++));
+                    messages.add(a);
+                }
+                body.add("messages", messages);
+
+                HttpRequest httpRequest = HttpRequest.newBuilder()
+                        .uri(URI.create(apiUrl))
+                        .header("Content-Type", "application/json")
+                        .header("x-api-key", apiKey)
+                        .header("anthropic-version", "2023-06-01")
+                        .header("anthropic-beta", "files-api-2025-04-14")
+                        .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                        .build();
+                HttpResponse<String> response = httpClient.send(httpRequest,
+                        HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() != 200) {
+                    return new StatefulResponse(
+                            "[Claude ERROR " + response.statusCode() + "] " + response.body(), null);
+                }
+
+                JsonObject parsed = JsonParser.parseString(response.body()).getAsJsonObject();
+                String stopReason = parsed.has("stop_reason")
+                        ? parsed.get("stop_reason").getAsString() : "";
+                JsonArray content = parsed.getAsJsonArray("content");
+
+                // Stash the assistant content as-is so next turn can replay it.
+                assistantTurns.add(content);
+
+                // Extract text output (may span multiple text blocks).
+                StringBuilder textBuf = new StringBuilder();
+                List<ToolCall> calls = new ArrayList<>();
+                for (JsonElement el : content) {
+                    if (!el.isJsonObject()) continue;
+                    JsonObject block = el.getAsJsonObject();
+                    String type = block.has("type") ? block.get("type").getAsString() : "";
+                    if ("text".equals(type) && block.has("text")) {
+                        textBuf.append(block.get("text").getAsString());
+                    } else if ("tool_use".equals(type)) {
+                        String id = block.has("id") ? block.get("id").getAsString() : "";
+                        String name = block.has("name") ? block.get("name").getAsString() : "";
+                        Map<String, Object> args = block.has("input") && block.get("input").isJsonObject()
+                                ? jsonObjToMap(block.getAsJsonObject("input"))
+                                : Map.of();
+                        calls.add(new ToolCall(id, name, args));
+                    }
+                }
+
+                if (!"tool_use".equals(stopReason) || calls.isEmpty()) {
+                    finalText = textBuf.toString();
+                    // End of loop — persist final assistant text as a
+                    // ChatMessage so subsequent sendStateful calls that
+                    // do NOT use tools can still replay history.
+                    state.messages.add(new ChatMessage("assistant", finalText));
+                    // Drop the tool-use turns we already spliced; they
+                    // are only needed while the tool loop is active.
+                    break;
+                }
+
+                // Run the tools and build a matching tool_result content
+                // array for the next turn's user message.
+                List<ToolResult> results = executor.executeAll(calls);
+                JsonArray resultArray = new JsonArray();
+                for (ToolResult r : results) {
+                    JsonObject rb = new JsonObject();
+                    rb.addProperty("type", "tool_result");
+                    rb.addProperty("tool_use_id", r.callId());
+                    rb.addProperty("content", r.content());
+                    if (r.isError()) rb.addProperty("is_error", true);
+                    resultArray.add(rb);
+                }
+                toolResultTurns.add(resultArray);
+            }
+
+            if (iteration >= ToolExecutor.DEFAULT_MAX_ITERATIONS && finalText.isEmpty()) {
+                finalText = "[max tool calls exceeded after "
+                        + ToolExecutor.DEFAULT_MAX_ITERATIONS + " iterations]";
+                state.messages.add(new ChatMessage("assistant", finalText));
+            }
+
+            String newStateId = UUID.randomUUID().toString();
+            conversations.put(newStateId, state);
+            if (previousStateId != null) conversations.remove(previousStateId);
+            return new StatefulResponse(finalText, newStateId);
+
+        } catch (Exception e) {
+            return new StatefulResponse("[Claude ERROR] " + e.getMessage(), null);
+        }
+    }
+
+    // ============================================================
+    // serializeTools() — ToolSchema list -> Anthropic tools array.
+    //
+    // Anthropic expects:
+    //   [ { "name": "...", "description": "...", "input_schema": {...} } ]
+    // The ToolSchema's parameterSchema Map is handed straight to Gson
+    // via toJsonTree so nested objects / arrays serialise faithfully.
+    // ============================================================
+    private static JsonArray serializeTools(List<ToolSchema> tools) {
+        Gson gson = new Gson();
+        JsonArray out = new JsonArray();
+        for (ToolSchema t : tools) {
+            JsonObject obj = new JsonObject();
+            obj.addProperty("name", t.name());
+            obj.addProperty("description", t.description());
+            obj.add("input_schema", gson.toJsonTree(t.parameterSchema()));
+            out.add(obj);
+        }
+        return out;
+    }
+
+    // Recursive JsonObject -> Map conversion so ToolCall.arguments()
+    // gives handlers plain-Java data without a Gson dependency on the
+    // handler side. Mirrors McpHost.jsonObjectToMap — kept local here
+    // so this file can be explained without cross-file jumps.
+    private static Map<String, Object> jsonObjToMap(JsonObject obj) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<>();
+        for (Map.Entry<String, JsonElement> e : obj.entrySet()) {
+            out.put(e.getKey(), jsonElemToJava(e.getValue()));
+        }
+        return out;
+    }
+
+    private static Object jsonElemToJava(JsonElement el) {
+        if (el == null || el.isJsonNull()) return null;
+        if (el.isJsonPrimitive()) {
+            var p = el.getAsJsonPrimitive();
+            if (p.isBoolean()) return p.getAsBoolean();
+            if (p.isNumber()) return p.getAsNumber();
+            return p.getAsString();
+        }
+        if (el.isJsonArray()) {
+            List<Object> arr = new ArrayList<>();
+            for (JsonElement x : el.getAsJsonArray()) arr.add(jsonElemToJava(x));
+            return arr;
+        }
+        if (el.isJsonObject()) return jsonObjToMap(el.getAsJsonObject());
+        return null;
     }
 }
