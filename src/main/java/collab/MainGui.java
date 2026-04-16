@@ -129,8 +129,17 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
         contextControl.addActionListener(e -> onOpenContextControl());
         JMenuItem clearHistory = new JMenuItem("Clear Conversation");
         clearHistory.addActionListener(e -> onClearConversation());
+        // Past Conversations opens the new ConversationHistorySidebar
+        // dialog — lists every JSONL session file under sessions/ and
+        // offers to resume the selected one into the active context.
+        JMenuItem pastConversations = new JMenuItem("Past Conversations...");
+        pastConversations.setAccelerator(KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_H,
+                java.awt.event.InputEvent.CTRL_DOWN_MASK | java.awt.event.InputEvent.SHIFT_DOWN_MASK));
+        pastConversations.addActionListener(e -> onOpenConversationHistory());
         contextMenu.add(contextControl);
         contextMenu.addSeparator();
+        contextMenu.add(pastConversations);
         contextMenu.add(clearHistory);
         menuBar.add(contextMenu);
 
@@ -930,6 +939,40 @@ public class MainGui extends JFrame implements DebateListener, ButtonPanel.Butto
                 activeTemplate, onProfileSaved, onEditProfile, onTemplateSaved,
                 apiRequestLog);
         dialog.setVisible(true);
+    }
+
+    // ============================================================
+    // onOpenConversationHistory() — Opens the past-conversations
+    // sidebar. When the user picks a session and clicks Resume, we
+    // replay its turns and syntheses into the active
+    // ConversationContext and rebuild the Maestro against a
+    // SessionStore attached to that file so subsequent cycles
+    // append to the same history.
+    //
+    // Why rebuild Maestro instead of swapping SessionStore in place:
+    // Maestro holds its SessionStore as a final field (constructor
+    // injection, the "don't mutate after construction" discipline
+    // the class already relies on). Rebuilding is cheap — same
+    // LlmClients, same AgentProfiles, just a different store — and
+    // keeps the class's immutability contract intact.
+    // ============================================================
+    private void onOpenConversationHistory() {
+        ConversationHistorySidebar dlg = new ConversationHistorySidebar(
+                this,
+                (file, turns, syntheses) -> {
+                    if (conversationContext != null) {
+                        conversationContext.clear();
+                        for (ConversationTurn t : turns) conversationContext.addTurn(t);
+                        for (String s : syntheses) conversationContext.addSynthesis(s);
+                    }
+                    // Rebuild the Maestro so new turns append to the
+                    // resumed file instead of the old live session.
+                    rebuildMaestro();
+                    statusLabel.setText("Resumed " + file.getFileName()
+                            + " (" + turns.size() + " turns, "
+                            + syntheses.size() + " syntheses).");
+                });
+        dlg.setVisible(true);
     }
 
     private void onClearConversation() {

@@ -223,11 +223,19 @@ public class Maestro {
             System.out.println("\n[Calling " + displayName + " (" + perspective + ")...]");
             notifyStatus("Calling " + displayName + " (" + perspective + ")...");
 
+            // Union debate-level attachments with this slot's own
+            // per-slot attachment list (experimental-branch addition).
+            // Legacy slots return an empty list so the common case
+            // reduces to the pre-existing debate-level semantics.
+            List<ContextAttachment> effectiveAttachments = new ArrayList<>(attachments);
+            for (FileAttachment slotAtt : slot.getAttachments()) {
+                effectiveAttachments.add(slotAtt);
+            }
             LlmRequest req = new LlmRequest(
                     promptBuilder.buildSystemInstruction(agent, activeStakeholder),
                     List.of(new ChatMessage("user", promptBuilder.buildPhase1UserMessage(userPrompt))),
                     configuredMaxTokens,
-                    attachments);
+                    effectiveAttachments);
             logRequest(cycle, "phase1", displayName, slot.providerKey(), req, null);
             StatefulResponse r = clients.get(i).sendStateful(req, null);
             String text = r.text();

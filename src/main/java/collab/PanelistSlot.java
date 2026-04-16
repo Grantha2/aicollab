@@ -1,6 +1,8 @@
 package collab;
 
 import java.net.http.HttpClient;
+import java.util.ArrayList;
+import java.util.List;
 
 // ============================================================
 // PanelistSlot.java — One seat in the debate panel.
@@ -13,6 +15,15 @@ import java.net.http.HttpClient;
 // Any mix is allowed — two Claude slots with different profiles
 // is a legitimate configuration. The panel size is no longer
 // fixed at three.
+//
+// Experimental branch additions:
+//   4) per-slot attachments — files this slot alone should see
+//      (on top of the debate-level profile-set attachments).
+//   5) per-slot tool names — which ToolSchemas from the debate-wide
+//      ToolExecutor are exposed to THIS slot. The Finance panelist
+//      gets the budget PDF and a budget-query tool; the Engineering
+//      panelist sees neither. Null / empty means "all tools" (the
+//      back-compat default).
 // ============================================================
 public final class PanelistSlot {
 
@@ -23,6 +34,14 @@ public final class PanelistSlot {
     // goes away. The editor sources selections from the library, but
     // what we persist is the resolved AgentProfile itself.
     private AgentProfile agent;
+
+    // Experimental per-slot context. Both lists are intentionally
+    // nullable in persisted JSON — older profile-set files won't
+    // have these fields and should deserialise unchanged. The
+    // getters below normalise null -> empty list so callers never
+    // need a null-check.
+    private List<FileAttachment> attachments;
+    private List<String> allowedTools;
 
     // no-arg constructor for Gson
     PanelistSlot() {}
@@ -40,6 +59,33 @@ public final class PanelistSlot {
     public void setProvider(Provider provider) { this.provider = provider; }
     public void setModel(String model) { this.model = model; }
     public void setAgent(AgentProfile agent) { this.agent = agent; }
+
+    /**
+     * Per-slot file attachments. Empty list when the slot has no
+     * override; Maestro unions this with the debate-level attachment
+     * list on each Phase 1 turn for this slot specifically.
+     */
+    public List<FileAttachment> getAttachments() {
+        return attachments == null ? new ArrayList<>() : attachments;
+    }
+
+    public void setAttachments(List<FileAttachment> attachments) {
+        this.attachments = attachments;
+    }
+
+    /**
+     * Names of ToolSchemas (from the shared ToolExecutor) this slot
+     * is allowed to invoke. Empty / null means "inherit the full set"
+     * — which is the pre-experimental behaviour every existing debate
+     * relies on, so legacy profile sets keep working.
+     */
+    public List<String> getAllowedTools() {
+        return allowedTools == null ? List.of() : allowedTools;
+    }
+
+    public void setAllowedTools(List<String> allowedTools) {
+        this.allowedTools = allowedTools;
+    }
 
     // ============================================================
     // buildClient() — Instantiates the correct LlmClient for this
