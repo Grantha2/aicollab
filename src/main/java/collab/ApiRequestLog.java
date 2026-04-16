@@ -111,7 +111,14 @@ public class ApiRequestLog {
             String systemInstruction,
             List<ChatMessage> messages,
             int maxTokens,
-            String stateId
+            String stateId,
+            // Experimental-branch additions: human-readable summaries of
+            // the attachments and tools that rode along on this request.
+            // Kept as plain Strings so the audit log stays a simple
+            // JSONL file — structured arrays would explode row lengths
+            // and make the viewer more work to read.
+            String attachmentsSummary,
+            String toolsSummary
     ) {
         public static RequestRecord from(int cycle, String phase, String model, String provider,
                                          LlmRequest req, String stateId) {
@@ -124,8 +131,50 @@ public class ApiRequestLog {
                     req.systemInstruction(),
                     req.messages(),
                     req.maxTokens(),
-                    stateId
+                    stateId,
+                    summariseAttachments(req),
+                    summariseTools(req)
             );
+        }
+
+        // ============================================================
+        // summariseAttachments() — One-line description of the
+        // attachments list for the request. Lists file display names
+        // and the names of any MCP server attachments. Returns an
+        // empty string when the request had none.
+        // ============================================================
+        private static String summariseAttachments(LlmRequest req) {
+            if (req.attachments() == null || req.attachments().isEmpty()) return "";
+            StringBuilder sb = new StringBuilder();
+            for (var att : req.attachments()) {
+                if (!sb.isEmpty()) sb.append(", ");
+                if (att instanceof FileAttachment fa) {
+                    sb.append("file:").append(fa.getDisplayName() == null
+                            ? fa.getLocalPath() : fa.getDisplayName());
+                } else if (att instanceof McpServerAttachment mcp) {
+                    sb.append("mcp:").append(mcp.name())
+                            .append("[").append(mcp.transport()).append("]");
+                } else {
+                    sb.append(att.getClass().getSimpleName());
+                }
+            }
+            return sb.toString();
+        }
+
+        // ============================================================
+        // summariseTools() — Comma-separated list of tool names
+        // available on this request. Kept concise; the viewer can
+        // expand each by clicking into the request's full body when
+        // the table UI ships.
+        // ============================================================
+        private static String summariseTools(LlmRequest req) {
+            if (req.tools() == null || req.tools().isEmpty()) return "";
+            StringBuilder sb = new StringBuilder();
+            for (var t : req.tools()) {
+                if (!sb.isEmpty()) sb.append(", ");
+                sb.append(t.name());
+            }
+            return sb.toString();
         }
     }
 }

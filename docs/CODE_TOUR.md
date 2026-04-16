@@ -20,6 +20,7 @@ source instead of trusting a paraphrase.
 | 6 | [File atlas](tour/06-file-atlas.md) | Tiered per-file reference for when you need it. |
 | 7 | [Glossary & FAQ](tour/07-glossary-faq.md) | Terms to know; questions a professor is likely to ask. |
 | 8 | [Change log](tour/08-changelog.md) | One-line entry per PR so you can trace what landed when. |
+| 9 | [Tools, MCP, and workflows](tour/09-tools-and-workflows.md) | The experimental-branch additions: tool-calling spine, MCP, room-reservation workflow, per-panelist attachments, history sidebar, viewer enrichments. |
 
 ## How to run
 

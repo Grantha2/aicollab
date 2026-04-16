@@ -225,13 +225,25 @@ public class ApiRequestViewerDialog extends JDialog {
         messagesArea.setCaretPosition(0);
 
         StringBuilder meta = new StringBuilder();
-        meta.append("Timestamp:  ").append(r.timestamp()).append('\n');
-        meta.append("Cycle:      ").append(r.cycle()).append('\n');
-        meta.append("Phase:      ").append(r.phase()).append('\n');
-        meta.append("Model:      ").append(r.model()).append('\n');
-        meta.append("Provider:   ").append(r.provider()).append('\n');
-        meta.append("Max tokens: ").append(r.maxTokens()).append('\n');
-        meta.append("State id:   ").append(r.stateId() == null ? "(none)" : r.stateId()).append('\n');
+        meta.append("Timestamp:    ").append(r.timestamp()).append('\n');
+        meta.append("Cycle:        ").append(r.cycle()).append('\n');
+        meta.append("Phase:        ").append(r.phase()).append('\n');
+        meta.append("Model:        ").append(r.model()).append('\n');
+        meta.append("Provider:     ").append(r.provider()).append('\n');
+        meta.append("Max tokens:   ").append(r.maxTokens()).append('\n');
+        meta.append("State id:     ").append(r.stateId() == null ? "(none)" : r.stateId()).append('\n');
+        // Experimental-branch additions: show what attachments rode
+        // along on this request and which tools were exposed to the
+        // model. Empty string means "none on this request" — common
+        // on Phase 2/3 follow-ups that rely on server-retained state.
+        meta.append("Attachments:  ")
+                .append(r.attachmentsSummary() == null || r.attachmentsSummary().isBlank()
+                        ? "(none)" : r.attachmentsSummary())
+                .append('\n');
+        meta.append("Tools:        ")
+                .append(r.toolsSummary() == null || r.toolsSummary().isBlank()
+                        ? "(none)" : r.toolsSummary())
+                .append('\n');
         metaArea.setText(meta.toString());
         metaArea.setCaretPosition(0);
     }
