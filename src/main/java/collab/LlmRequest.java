@@ -23,23 +23,33 @@ import java.util.List;
 public record LlmRequest(String systemInstruction,
                          List<ChatMessage> messages,
                          int maxTokens,
-                         List<ContextAttachment> attachments) {
+                         List<ContextAttachment> attachments,
+                         List<ToolSchema> tools) {
 
-    // Back-compat constructor so every existing call site that did
-    // `new LlmRequest(sys, msgs, n)` keeps compiling. Supplies an
-    // empty attachments list — the common case for anywhere that
-    // isn't a user-driven debate turn.
+    // Back-compat constructor (pre-attachments era). Existing callers
+    // that did `new LlmRequest(sys, msgs, n)` still compile and still
+    // get an empty attachments list and an empty tools list.
     public LlmRequest(String systemInstruction,
                       List<ChatMessage> messages,
                       int maxTokens) {
-        this(systemInstruction, messages, maxTokens, List.of());
+        this(systemInstruction, messages, maxTokens, List.of(), List.of());
     }
 
-    // Canonical ctor normalises null attachments -> empty list so
-    // downstream loops can unconditionally iterate.
+    // Back-compat constructor for the Phase-A attachments era. Callers
+    // that already wire in attachments but not tools keep working;
+    // they receive an empty tools list by default.
+    public LlmRequest(String systemInstruction,
+                      List<ChatMessage> messages,
+                      int maxTokens,
+                      List<ContextAttachment> attachments) {
+        this(systemInstruction, messages, maxTokens, attachments, List.of());
+    }
+
+    // Canonical ctor normalises null list fields -> empty list so
+    // downstream loops can unconditionally iterate. Gson and test
+    // code that round-trips this record via reflection both benefit.
     public LlmRequest {
-        if (attachments == null) {
-            attachments = List.of();
-        }
+        if (attachments == null) attachments = List.of();
+        if (tools == null) tools = List.of();
     }
 }

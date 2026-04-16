@@ -22,10 +22,19 @@ package collab;
 // f -> …" — is the compiler-enforced source of truth for "every client
 // handles every attachment type we support today".
 //
-// PHASE A — ONLY FileAttachment IS IMPLEMENTED.
-// The permits list already reserves slots for the two follow-on phases
-// (RagCorpusAttachment, McpServerAttachment) so the wire-up pattern is
-// in place when we get there, but neither exists yet.
+// ACTIVE MEMBERS OF THE SEALED HIERARCHY:
+//   FileAttachment       — a local file uploaded to each provider's
+//                          Files API and referenced by ID on every
+//                          first turn (Phase A / PR #27).
+//   McpServerAttachment  — a Model Context Protocol server whose
+//                          tools should be exposed to the debate
+//                          (tools spine / PR #29).
+//
+// RagCorpusAttachment remains a planned future member — when it
+// lands, every client's switch-on-attachment will fail to compile
+// until each adds a branch for it. That is intentional pressure to
+// keep the wire-up exhaustive.
 // ============================================================
-public sealed interface ContextAttachment permits FileAttachment {
+public sealed interface ContextAttachment
+        permits FileAttachment, McpServerAttachment {
 }
