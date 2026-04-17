@@ -1,440 +1,189 @@
 package collab;
 
-// ============================================================
-// Main.java — Entry point for the AI Collaboration Platform.
-//
-// WHAT THIS FILE DOES (one sentence):
-// Reads user input, manages the hotseat menu, and calls the
-// Maestro — it's the front door, not the brain.
-//
-// HOW IT FITS THE ARCHITECTURE:
-// Main.java is the first file a new team member should read.
-// It shows how all the pieces connect:
-//
-//   Config          → loads API keys and settings
-//   LlmClient       → interface that every AI model implements
-//   AnthropicClient → Claude API (implements LlmClient)
-//   OpenAiClient    → GPT API (implements LlmClient)
-//   GeminiClient    → Gemini API (implements LlmClient)
-//   AgentProfile    → each model's identity and perspective
-//   StakeholderProfile → each human team member's profile
-//   ConversationContext → memory across debate cycles
-//   PromptBuilder   → assembles the layered context prompts
-//   Maestro         → runs the 3-phase debate cycle
-//
-// Main.java creates all of these, wires them together, and then
-// runs a loop: pick a stakeholder, type a prompt, confirm, debate.
-//
-// HOW TO RUN:
-//   Option A (Maven):  mvn compile exec:java
-//   Option B (javac):  javac -d target src/main/java/collab/*.java
-//                      java -cp target collab.Main
-//
-// On first run, the program will ask for your API keys and save
-// them locally (they won't be asked again).
-// ============================================================
-
 import java.net.http.HttpClient;
-import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Scanner;
 
 public class Main {
 
     public static void main(String[] args) {
-        // ============================================================
-        // HiDPI / RETINA AWARENESS
-        //
-        // These properties MUST be set before any AWT/Swing class is
-        // loaded, otherwise the JVM has already committed to a
-        // non-scaled rendering pipeline and the GUI ships out blurry
-        // on high-DPI (Retina, 4K) displays. We also enable the
-        // system's font antialiasing settings so text stays crisp.
-        // ============================================================
         configureHiDpi();
 
-        boolean cliMode = java.util.Arrays.stream(args).anyMatch("--cli"::equals);
+        boolean cliMode = Arrays.stream(args).anyMatch("--cli"::equals);
         if (!cliMode) {
             MainGui.launch();
             return;
         }
 
-        // ==========================
-        // STEP 1: LOAD CONFIGURATION
-        // ==========================
-        // Config reads API keys and settings from config.properties.
-        // If the file doesn't exist, it walks you through first-time setup.
         Config config = new Config("config.properties");
-
-        // ==========================
-        // STEP 2: CREATE SHARED HTTP CLIENT
-        // ==========================
-        // One HttpClient instance, shared by all three API clients.
-        // Creating a new one each time wastes resources (connection pools,
-        // thread pools). This is a standard Java pattern.
         HttpClient httpClient = HttpClient.newHttpClient();
-
-        // ==========================
-        // STEP 3: CREATE THE THREE AI CLIENTS
-        // ==========================
-        // Each client implements LlmClient (the interface). The Maestro
-        // doesn't know or care which provider is behind each one — it just
-        // calls sendMessage(). This is the power of the interface pattern.
         int maxTokens = config.getMaxResponseTokens();
 
-        LlmClient claudeClient = new AnthropicClient(
-                httpClient, config.getClaudeUrl(), config.getClaudeKey(),
-                config.getClaudeModel(), maxTokens);
+        List<LlmClient> clients = List.of(
+            new AnthropicClient(httpClient, config.getClaudeUrl(), config.getClaudeKey(),
+                    config.getClaudeModel(), maxTokens),
+            new OpenAiClient(httpClient, config.getOpenAiUrl(), config.getOpenAiKey(),
+                    config.getOpenAiModel(), maxTokens),
+            new GeminiClient(httpClient, config.getGeminiKey(),
+                    config.getGeminiModel(), maxTokens)
+        );
 
-        LlmClient gptClient = new OpenAiClient(
-                httpClient, config.getOpenAiUrl(), config.getOpenAiKey(),
-                config.getOpenAiModel(), maxTokens);
-
-        LlmClient geminiClient = new GeminiClient(
-                httpClient, config.getGeminiKey(),
-                config.getGeminiModel(), maxTokens);
-
-        // ==========================
-        // STEP 4: LOAD THE ACTIVE PROFILE SET
-        // ==========================
-        // The profile system is the single source of truth for the AI panel
-        // and the list of stakeholders. The GUI uses the same ProfileLibrary,
-        // so CLI and GUI stay in sync. If no profile exists yet,
-        // ensureDefaultExists() writes one from built-in defaults — the app
-        // always boots cold without requiring a setup wizard.
-        ProfileLibrary profileLibrary = new ProfileLibrary();
-        ProfileSet activeProfileSet;
-        try {
-            profileLibrary.ensureDefaultExists();
-            activeProfileSet = profileLibrary.loadSet("default");
-        } catch (java.io.IOException e) {
-            System.err.println("Failed to load profile set: " + e.getMessage());
-            System.err.println("Falling back to built-in defaults for this session.");
-            activeProfileSet = ProfileSet.fromDefaults();
+        Profiles profiles = Profiles.loadOrDefault();
+        List<Profiles.Agent> agents = profiles.agents();
+        List<Profiles.Stakeholder> stakeholders = profiles.stakeholders();
+        if (agents.size() < 3) {
+            System.err.println("profiles.json needs at least 3 agents; using defaults.");
+            agents = Profiles.defaults().agents();
         }
+        // The CLI only runs with the first 3 agents to match the 3 clients.
+        agents = agents.subList(0, 3);
 
-        List<AgentProfile> agents = activeProfileSet.getAgents();
-        if (agents == null || agents.size() < 3) {
-            System.err.println("Active profile set has fewer than 3 agents; "
-                    + "falling back to built-in defaults for this session.");
-            agents = AgentProfile.getDefaults();
-        }
-        AgentProfile claudeAgent = agents.get(0);
-        AgentProfile gptAgent    = agents.get(1);
-        AgentProfile geminiAgent = agents.get(2);
-
-        // ==========================
-        // STEP 5: LOAD STAKEHOLDER PROFILES
-        // ==========================
-        // The team members from the active profile set. The user picks one
-        // before each cycle (the "hotseat"), and that profile gets injected
-        // into every prompt.
-        List<StakeholderProfile> stakeholders = activeProfileSet.getStakeholders();
-        if (stakeholders == null || stakeholders.isEmpty()) {
-            stakeholders = StakeholderProfile.getDefaults();
-        }
-
-        // ==========================
-        // STEP 6: CREATE MEMORY AND PROMPT BUILDER
-        // ==========================
-        // ConversationContext stores synthesis reports from past cycles.
-        // PromptBuilder uses it to include history in future prompts.
         ConversationContext context = new ConversationContext(config.getMaxHistoryChars());
         Scanner scanner = new Scanner(System.in);
         SessionStore sessionStore = selectSessionStore(scanner, context);
-        PromptBuilder promptBuilder = new PromptBuilder(context, activeProfileSet.getTeamContext());
+        ContextController ctxController = new ContextController();
+        PromptBuilder promptBuilder = new PromptBuilder(context, ctxController, profiles.teamContext());
 
-        // ==========================
-        // STEP 7: CREATE THE MAESTRO
-        // ==========================
-        // The Maestro is the brain — it runs the 3-phase debate.
-        // We pass it everything it needs: clients, agents, prompt builder,
-        // memory, and how many debate rounds to run.
-        ApiRequestLog apiRequestLog = new ApiRequestLog();
-        Maestro maestro = new Maestro(
-                claudeClient, gptClient, geminiClient,
-                claudeAgent, gptAgent, geminiAgent,
-                promptBuilder, context,
-                config.getDebateRounds(), maxTokens, sessionStore, apiRequestLog);
+        Maestro maestro = new Maestro(clients, agents, promptBuilder, context,
+                config.getDebateRounds(), sessionStore);
 
-        // ==========================
-        // STEP 8: RUN THE CLI LOOP
-        // ==========================
         int cycleCount = 0;
-        int activeStakeholderIndex = 0;
+        int activeIdx = 0;
 
-        System.out.println("========================================");
-        System.out.println("  AI Collaboration Platform v0.4");
-        System.out.println("  Full Debate Cycle: 3 Models + Synthesis");
-        System.out.println("  Each cycle makes " + maestro.getApiCallCount() + " API calls.");
-        System.out.println("  Session file: " + sessionStore.getSessionFile());
-        System.out.println("  Type 'quit' to exit.");
-        System.out.println("========================================");
+        System.out.println("==========================================");
+        System.out.println("  AI Collaboration Platform v0.5");
+        System.out.println("  Each cycle = " + maestro.getApiCallCount() + " API calls.");
+        System.out.println("  Session: " + sessionStore.getSessionFile());
+        System.out.println("==========================================");
 
-        // --- STAKEHOLDER SELECTION (the "hotseat") ---
-        // Before any prompts, the user picks which team member they are.
-        activeStakeholderIndex = selectStakeholder(scanner, stakeholders, activeStakeholderIndex);
+        activeIdx = selectStakeholder(scanner, stakeholders, activeIdx);
 
         while (true) {
-
-            // Show who's in the hotseat and get their prompt
-            StakeholderProfile active = stakeholders.get(activeStakeholderIndex);
+            Profiles.Stakeholder active = stakeholders.get(activeIdx);
             System.out.println();
-            System.out.println("[" + active.getName() + " \u2014 " + active.getRole() + "]");
-
-            // Show memory status if the panel has context from previous cycles
+            System.out.println("[" + active.name() + " \u2014 " + active.role() + "]");
             if (context.getCycleCount() > 0) {
-                System.out.println("(Panel has context from " + context.getCycleCount() + " previous cycle"
+                System.out.println("(Panel context: " + context.getCycleCount() + " previous cycle"
                         + (context.getCycleCount() == 1 ? "" : "s") + ")");
             }
-
             System.out.println("(Commands: 'switch', 'quit')");
             System.out.println("Enter your prompt (type SEND on its own line to submit):");
 
-            // ============================================================
-            // MULTI-LINE INPUT COLLECTION
-            //
-            // WHY NOT JUST scanner.nextLine()?
-            // Terminal input reads one line at a time. If the user pastes
-            // a multi-paragraph prompt, each line fires separately. We
-            // collect lines into a StringBuilder until the user types
-            // "SEND" on its own line. This means:
-            //   - Pasting multi-line text works perfectly
-            //   - Blank lines within the prompt are preserved
-            //   - Only an explicit "SEND" triggers the debate cycle
-            // ============================================================
-
-            StringBuilder inputBuilder = new StringBuilder();
+            StringBuilder buf = new StringBuilder();
             while (true) {
                 String line = scanner.nextLine();
-
-                // Check for commands ONLY on the first line (before any
-                // content has been entered).
-                if (inputBuilder.isEmpty()) {
-                    if (line.trim().equalsIgnoreCase("quit")) {
-                        inputBuilder.append("__QUIT__");
-                        break;
-                    }
-                    if (line.trim().equalsIgnoreCase("switch")) {
-                        inputBuilder.append("__SWITCH__");
-                        break;
-                    }
+                if (buf.isEmpty()) {
+                    if (line.trim().equalsIgnoreCase("quit")) { buf.append("__QUIT__"); break; }
+                    if (line.trim().equalsIgnoreCase("switch")) { buf.append("__SWITCH__"); break; }
                 }
-
-                // "SEND" on its own line = done collecting input
-                if (line.trim().equalsIgnoreCase("SEND")) {
-                    break;
-                }
-
-                if (inputBuilder.length() > 0) {
-                    inputBuilder.append("\n");
-                }
-                inputBuilder.append(line);
+                if (line.trim().equalsIgnoreCase("SEND")) break;
+                if (buf.length() > 0) buf.append("\n");
+                buf.append(line);
             }
 
-            String userPrompt = inputBuilder.toString().trim();
-
-            // Handle special command signals
-            if (userPrompt.equals("__QUIT__")) {
-                System.out.println("Goodbye! Ran " + cycleCount + " debate cycle(s) this session.");
+            String prompt = buf.toString().trim();
+            if ("__QUIT__".equals(prompt)) {
+                System.out.println("Bye. Ran " + cycleCount + " cycles.");
                 break;
             }
-
-            if (userPrompt.equals("__SWITCH__")) {
-                activeStakeholderIndex = selectStakeholder(scanner, stakeholders, activeStakeholderIndex);
+            if ("__SWITCH__".equals(prompt)) {
+                activeIdx = selectStakeholder(scanner, stakeholders, activeIdx);
+                continue;
+            }
+            if (prompt.isEmpty()) {
+                System.out.println("(Empty prompt.)");
                 continue;
             }
 
-            if (userPrompt.isEmpty()) {
-                System.out.println("(Empty prompt \u2014 type something, then SEND)");
-                continue;
-            }
-
-            // ============================================================
-            // COST SAFEGUARD: Confirm before running
-            // ============================================================
-            String preview = userPrompt.length() > 100
-                    ? userPrompt.substring(0, 100) + "..."
-                    : userPrompt;
-            System.out.println();
-            System.out.println("Stakeholder: " + active.getName() + " (" + active.getRole() + ")");
-            System.out.println("Prompt preview: " + preview);
-            System.out.println("This will run a full debate cycle (" + maestro.getApiCallCount() + " API calls).");
-            System.out.print("Proceed? (y/n): ");
+            System.out.print("Run debate (" + maestro.getApiCallCount() + " API calls)? (y/n): ");
             String confirm = scanner.nextLine().trim().toLowerCase();
-
             if (!confirm.equals("y") && !confirm.equals("yes")) {
-                System.out.println("Cancelled. Enter a new prompt or 'quit' to exit.");
+                System.out.println("Cancelled.");
                 continue;
             }
 
-            // Run the debate!
-            maestro.runDebate(userPrompt, active);
+            maestro.runDebate(prompt, active);
             cycleCount++;
 
-            // ============================================================
-            // POST-CYCLE PAUSE
-            //
-            // After a cycle completes, show a clear separator and the
-            // running total. Wait for explicit "Enter" before continuing.
-            // ============================================================
             System.out.println();
-            System.out.println("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
-            System.out.println("  Cycle complete. Total cycles run: " + cycleCount);
-            System.out.println("  Estimated API calls this session: " + (cycleCount * maestro.getApiCallCount()));
-            System.out.println("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
-            System.out.println();
-            System.out.print("Press Enter to continue (or type 'quit'): ");
-            String afterCycle = scanner.nextLine().trim().toLowerCase();
-
-            if (afterCycle.equalsIgnoreCase("quit")) {
-                System.out.println("Goodbye! Ran " + cycleCount + " debate cycle(s) this session.");
-                break;
-            }
+            System.out.println("Cycle " + cycleCount + " complete.");
+            System.out.print("Press Enter to continue (or 'quit'): ");
+            if (scanner.nextLine().trim().equalsIgnoreCase("quit")) break;
         }
-
         scanner.close();
     }
 
     private static SessionStore selectSessionStore(Scanner scanner, ConversationContext context) {
         while (true) {
             System.out.println();
-            System.out.println("Session options:");
-            System.out.println("  1) Start new session");
-            System.out.println("  2) Resume existing session");
-            System.out.print("Choose 1 or 2: ");
+            System.out.println("Session: 1) new   2) resume existing");
+            System.out.print("Choose: ");
             String choice = scanner.nextLine().trim();
-
             if ("1".equals(choice)) {
-                SessionStore store = SessionStore.createNewDefaultSession();
-                System.out.println("Created new session: " + store.getSessionFile());
-                return store;
+                SessionStore s = SessionStore.createNew();
+                System.out.println("New session: " + s.getSessionFile());
+                return s;
             }
-
             if ("2".equals(choice)) {
-                List<Path> files = SessionStore.listSessionFiles(SessionStore.defaultSessionsDir());
+                var files = SessionStore.listSessionFiles();
                 if (files.isEmpty()) {
-                    System.out.println("No session files found in " + SessionStore.defaultSessionsDir()
-                            + ". Starting a new one instead.");
-                    SessionStore store = SessionStore.createNewDefaultSession();
-                    System.out.println("Created new session: " + store.getSessionFile());
-                    return store;
+                    System.out.println("No sessions found, starting new.");
+                    SessionStore s = SessionStore.createNew();
+                    System.out.println("New session: " + s.getSessionFile());
+                    return s;
                 }
-
-                System.out.println("Available sessions:");
                 for (int i = 0; i < files.size(); i++) {
                     System.out.println("  " + (i + 1) + ") " + files.get(i).getFileName());
                 }
-                System.out.print("Enter session number to resume: ");
-                String selected = scanner.nextLine().trim();
+                System.out.print("Session number: ");
                 try {
-                    int idx = Integer.parseInt(selected) - 1;
-                    if (idx < 0 || idx >= files.size()) {
-                        System.out.println("Invalid session number.");
-                        continue;
-                    }
-                    Path selectedFile = files.get(idx);
-                    SessionStore store = new SessionStore(selectedFile);
-                    List<ConversationTurn> turns = store.loadTurns(selectedFile);
-                    for (ConversationTurn turn : turns) {
-                        context.addTurn(turn);
-                    }
-                    List<String> syntheses = store.loadSyntheses(selectedFile);
-                    for (String synthesis : syntheses) {
-                        context.addSynthesis(synthesis);
-                    }
-                    System.out.println("Resumed: " + selectedFile);
-                    System.out.println("Loaded " + turns.size() + " turns and "
-                            + syntheses.size() + " synthesis entries.");
-                    return store;
+                    int idx = Integer.parseInt(scanner.nextLine().trim()) - 1;
+                    if (idx < 0 || idx >= files.size()) { System.out.println("Invalid."); continue; }
+                    SessionStore s = new SessionStore(files.get(idx));
+                    for (String syn : s.loadSyntheses()) context.addSynthesis(syn);
+                    System.out.println("Resumed: " + files.get(idx));
+                    return s;
                 } catch (NumberFormatException e) {
-                    System.out.println("Please enter a valid number.");
+                    System.out.println("Not a number.");
                 }
-                continue;
             }
-
-            System.out.println("Please enter 1 or 2.");
         }
     }
 
-
-    // ============================================================
-    // selectStakeholder() — Displays the profile menu and lets
-    // the user pick which stakeholder is in the "hotseat."
-    //
-    // LEARNING POINT: This is a simple menu pattern. The user sees
-    // a numbered list, types a number, and we validate the input.
-    // In a web version, this would be a dropdown or user login.
-    //
-    // PARAMETERS:
-    //   scanner      — for reading user input
-    //   stakeholders — the list of available profiles
-    //   current      — the current selection index (kept if input is invalid)
-    //
-    // RETURNS: the new active stakeholder index
-    // ============================================================
     private static int selectStakeholder(Scanner scanner,
-                                         List<StakeholderProfile> stakeholders,
+                                         List<Profiles.Stakeholder> stakeholders,
                                          int current) {
         System.out.println();
-        System.out.println("\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557");
-        System.out.println("\u2551   Select Active Stakeholder          \u2551");
-        System.out.println("\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d");
-        System.out.println();
-
+        System.out.println("--- Select Active Stakeholder ---");
         for (int i = 0; i < stakeholders.size(); i++) {
-            StakeholderProfile p = stakeholders.get(i);
-            System.out.println("  " + (i + 1) + ". " + p.getName() + " \u2014 " + p.getRole()
-                    + " (" + p.getFocusArea() + ")");
+            Profiles.Stakeholder p = stakeholders.get(i);
+            System.out.println("  " + (i + 1) + ". " + p.name() + " \u2014 " + p.role()
+                    + " (" + p.focusArea() + ")");
         }
-
-        System.out.println();
         System.out.print("Enter number (1-" + stakeholders.size() + "): ");
-        String input = scanner.nextLine().trim();
-
         try {
-            int choice = Integer.parseInt(input) - 1;
-
+            int choice = Integer.parseInt(scanner.nextLine().trim()) - 1;
             if (choice >= 0 && choice < stakeholders.size()) {
-                StakeholderProfile selected = stakeholders.get(choice);
-                System.out.println();
-                System.out.println("Active stakeholder: " + selected.getName()
-                        + " \u2014 " + selected.getRole());
-                System.out.println("KPIs: " + selected.getEvaluatedOn());
-                System.out.println("Authority: " + selected.getResponsibilities());
+                Profiles.Stakeholder sel = stakeholders.get(choice);
+                System.out.println("Active: " + sel.name() + " \u2014 " + sel.role());
                 return choice;
-            } else {
-                System.out.println("Invalid choice. Keeping current: "
-                        + stakeholders.get(current).getName());
             }
         } catch (NumberFormatException e) {
-            System.out.println("Invalid input. Keeping current: "
-                    + stakeholders.get(current).getName());
+            // fallthrough
         }
-
+        System.out.println("Keeping current: " + stakeholders.get(current).name());
         return current;
     }
 
-    // ============================================================
-    // configureHiDpi() — Turns on DPI awareness and crisp text.
-    //
-    // Called at the very top of main() before any AWT/Swing class
-    // is loaded. Setting these properties after the AWT toolkit
-    // has initialised is a no-op, which is why we do it here.
-    // ============================================================
     private static void configureHiDpi() {
-        // Scale the Swing rendering pipeline to the display's DPI.
         setIfAbsent("sun.java2d.uiScale.enabled", "true");
-        // Tell the Windows/Linux JVM to honour OS DPI awareness.
         setIfAbsent("sun.java2d.dpiaware", "true");
-        // Use the OS-configured subpixel AA for fonts (LCD / greyscale).
         setIfAbsent("awt.useSystemAAFontSettings", "on");
         setIfAbsent("swing.aatext", "true");
     }
 
     private static void setIfAbsent(String key, String value) {
-        if (System.getProperty(key) == null) {
-            System.setProperty(key, value);
-        }
+        if (System.getProperty(key) == null) System.setProperty(key, value);
     }
 }

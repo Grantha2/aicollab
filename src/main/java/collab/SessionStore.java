@@ -1,10 +1,14 @@
 package collab;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -12,45 +16,49 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Stream;
 
+// Appends one JSON object per line to sessions/session-<ts>.jsonl.
+// Stores synthesis entries and (optionally) per-phase turns.
 public class SessionStore {
 
-    private static final String FILE_PREFIX = "session-";
-    private static final String FILE_SUFFIX = ".jsonl";
+    private static final String PREFIX = "session-";
+    private static final String SUFFIX = ".jsonl";
 
     private final Path sessionFile;
 
     public SessionStore(Path sessionFile) {
         this.sessionFile = sessionFile;
-        ensureParentDirectoryExists();
-        ensureFileExists();
+        try {
+            Path parent = sessionFile.getParent();
+            if (parent != null) Files.createDirectories(parent);
+            if (!Files.exists(sessionFile)) Files.createFile(sessionFile);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to prepare " + sessionFile, e);
+        }
     }
 
     public static Path defaultSessionsDir() {
         return Path.of("sessions");
     }
 
-    public static SessionStore createNewDefaultSession() {
-        String timestamp = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
-                .replace(":", "-");
-        Path file = defaultSessionsDir().resolve(FILE_PREFIX + timestamp + FILE_SUFFIX);
-        return new SessionStore(file);
+    public static SessionStore createNew() {
+        String ts = DateTimeFormatter.ISO_INSTANT.format(Instant.now()).replace(":", "-");
+        return new SessionStore(defaultSessionsDir().resolve(PREFIX + ts + SUFFIX));
     }
 
-    public static List<Path> listSessionFiles(Path sessionsDir) {
-        if (!Files.isDirectory(sessionsDir)) {
-            return List.of();
-        }
-        try (Stream<Path> stream = Files.list(sessionsDir)) {
+    public static List<Path> listSessionFiles() {
+        Path dir = defaultSessionsDir();
+        if (!Files.isDirectory(dir)) return List.of();
+        try (Stream<Path> stream = Files.list(dir)) {
             return stream
                     .filter(Files::isRegularFile)
-                    .filter(path -> {
-                        String name = path.getFileName().toString();
-                        return name.startsWith(FILE_PREFIX) && name.endsWith(FILE_SUFFIX);
+                    .filter(p -> {
+                        String name = p.getFileName().toString();
+                        return name.startsWith(PREFIX) && name.endsWith(SUFFIX);
                     })
                     .sorted(Comparator.reverseOrder())
                     .toList();
         } catch (IOException e) {
-            throw new RuntimeException("Failed to list session files in " + sessionsDir, e);
+            return List.of();
         }
     }
 
@@ -58,165 +66,50 @@ public class SessionStore {
         return sessionFile;
     }
 
-    public void appendTurn(ConversationTurn turn) {
-        String json = "{\"type\":\"turn\","
-                + "\"cycle\":" + turn.cycle() + ","
-                + "\"phase\":\"" + escapeForJson(turn.phase()) + "\","
-                + "\"model\":\"" + escapeForJson(turn.model()) + "\","
-                + "\"role\":\"" + escapeForJson(turn.role()) + "\","
-                + "\"content\":\"" + escapeForJson(turn.content()) + "\","
-                + "\"epochMillis\":" + turn.epochMillis()
-                + "}";
-        appendLine(json);
+    public void appendTurn(int cycle, String phase, String model, String content) {
+        JsonObject obj = new JsonObject();
+        obj.addProperty("type", "turn");
+        obj.addProperty("cycle", cycle);
+        obj.addProperty("phase", phase);
+        obj.addProperty("model", model);
+        obj.addProperty("content", content);
+        obj.addProperty("epochMillis", System.currentTimeMillis());
+        appendLine(obj.toString());
     }
 
     public void appendSynthesis(int cycle, String synthesis) {
-        String json = "{\"type\":\"synthesis\","
-                + "\"cycle\":" + cycle + ","
-                + "\"synthesis\":\"" + escapeForJson(synthesis) + "\","
-                + "\"epochMillis\":" + System.currentTimeMillis()
-                + "}";
-        appendLine(json);
+        JsonObject obj = new JsonObject();
+        obj.addProperty("type", "synthesis");
+        obj.addProperty("cycle", cycle);
+        obj.addProperty("synthesis", synthesis);
+        obj.addProperty("epochMillis", System.currentTimeMillis());
+        appendLine(obj.toString());
     }
 
-    public List<ConversationTurn> loadTurns(Path file) {
-        List<ConversationTurn> turns = new ArrayList<>();
-        for (String line : readAllLines(file)) {
-            if (!"turn".equals(extractJsonString(line, "type"))) {
-                continue;
-            }
-            turns.add(new ConversationTurn(
-                    (int) extractJsonLong(line, "cycle"),
-                    extractJsonString(line, "phase"),
-                    extractJsonString(line, "model"),
-                    extractJsonString(line, "role"),
-                    extractJsonString(line, "content"),
-                    extractJsonLong(line, "epochMillis")
-            ));
-        }
-        return turns;
-    }
-
-    public List<String> loadSyntheses(Path file) {
-        List<String> syntheses = new ArrayList<>();
-        for (String line : readAllLines(file)) {
-            if (!"synthesis".equals(extractJsonString(line, "type"))) {
-                continue;
-            }
-            syntheses.add(extractJsonString(line, "synthesis"));
-        }
-        return syntheses;
-    }
-
-    private List<String> readAllLines(Path file) {
-        if (!Files.exists(file)) {
-            return List.of();
-        }
+    public List<String> loadSyntheses() {
+        List<String> out = new ArrayList<>();
+        if (!Files.exists(sessionFile)) return out;
         try {
-            return Files.readAllLines(file, StandardCharsets.UTF_8);
+            for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
+                if (line.isBlank()) continue;
+                JsonObject obj = JsonParser.parseString(line).getAsJsonObject();
+                if (obj.has("type") && "synthesis".equals(obj.get("type").getAsString())) {
+                    out.add(obj.get("synthesis").getAsString());
+                }
+            }
         } catch (IOException e) {
-            throw new RuntimeException("Failed reading session file " + file, e);
+            System.err.println("[SessionStore] Failed to read " + sessionFile + ": " + e.getMessage());
         }
+        return out;
     }
 
     private void appendLine(String line) {
-        try (BufferedWriter writer = Files.newBufferedWriter(
-                sessionFile,
-                StandardCharsets.UTF_8,
-                java.nio.file.StandardOpenOption.CREATE,
-                java.nio.file.StandardOpenOption.APPEND)) {
-            writer.write(line);
-            writer.newLine();
+        try (BufferedWriter w = Files.newBufferedWriter(
+                sessionFile, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+            w.write(line);
+            w.newLine();
         } catch (IOException e) {
-            throw new RuntimeException("Failed writing session event to " + sessionFile, e);
+            throw new RuntimeException("Failed writing to " + sessionFile, e);
         }
-    }
-
-    private void ensureParentDirectoryExists() {
-        try {
-            Path parent = sessionFile.getParent();
-            if (parent != null) {
-                Files.createDirectories(parent);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to create session directory for " + sessionFile, e);
-        }
-    }
-
-    private void ensureFileExists() {
-        try {
-            if (!Files.exists(sessionFile)) {
-                Files.createFile(sessionFile);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to create session file " + sessionFile, e);
-        }
-    }
-
-    private static String escapeForJson(String input) {
-        return input
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
-    }
-
-    private static String unescapeJsonString(String input) {
-        return input
-                .replace("\\t", "\t")
-                .replace("\\r", "\r")
-                .replace("\\n", "\n")
-                .replace("\\\"", "\"")
-                .replace("\\\\", "\\");
-    }
-
-    private static String extractJsonString(String json, String fieldName) {
-        String marker = "\"" + fieldName + "\":\"";
-        int start = json.indexOf(marker);
-        if (start < 0) {
-            String markerWithSpace = "\"" + fieldName + "\": \"";
-            start = json.indexOf(markerWithSpace);
-            if (start < 0) {
-                throw new IllegalArgumentException("Field '" + fieldName + "' not found in " + json);
-            }
-            start += markerWithSpace.length();
-        } else {
-            start += marker.length();
-        }
-
-        int end = start;
-        while (end < json.length()) {
-            if (json.charAt(end) == '"') {
-                int backslashes = 0;
-                int check = end - 1;
-                while (check >= start && json.charAt(check) == '\\') {
-                    backslashes++;
-                    check--;
-                }
-                if (backslashes % 2 == 0) {
-                    break;
-                }
-            }
-            end++;
-        }
-        return unescapeJsonString(json.substring(start, end));
-    }
-
-    private static long extractJsonLong(String json, String fieldName) {
-        String marker = "\"" + fieldName + "\":";
-        int start = json.indexOf(marker);
-        if (start < 0) {
-            throw new IllegalArgumentException("Field '" + fieldName + "' not found in " + json);
-        }
-        start += marker.length();
-        while (start < json.length() && Character.isWhitespace(json.charAt(start))) {
-            start++;
-        }
-        int end = start;
-        while (end < json.length() && (Character.isDigit(json.charAt(end)) || json.charAt(end) == '-')) {
-            end++;
-        }
-        return Long.parseLong(json.substring(start, end));
     }
 }
