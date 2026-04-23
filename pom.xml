@@ -76,29 +76,6 @@
             <artifactId>flatlaf</artifactId>
             <version>3.5.1</version>
         </dependency>
-
-        <!--
-            Apache PDFBox — read and fill PDF forms.
-
-            WHY IT'S HERE:
-            The room-reservation workflow (collab.workflows.RoomReservationWorkflow)
-            needs to fill the RSO facility request form PDF with the
-            user's event details and produce a downloadable copy for
-            the user to review (and optionally email). PDFBox is the
-            standard Java PDF library, has full AcroForm support, and
-            does not require any native dependencies or licenses.
-
-            WHY 3.0.x:
-            3.x is the current stable line (the 2.x series reached end
-            of life in 2025). We pin a patch version so builds remain
-            reproducible; bumping is a one-line edit when PDFBox ships
-            security fixes.
-        -->
-        <dependency>
-            <groupId>org.apache.pdfbox</groupId>
-            <artifactId>pdfbox</artifactId>
-            <version>3.0.3</version>
-        </dependency>
     </dependencies>
 
     <build>
