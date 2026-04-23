@@ -11,61 +11,47 @@ import java.net.http.HttpResponse;
 import java.util.List;
 
 public class OpenAiClient implements LlmClient {
-
-    private final HttpClient httpClient;
-    private final String apiUrl;
-    private final String apiKey;
-    private final String modelName;
+    private final HttpClient http;
+    private final String url, key, model;
     private final int maxTokens;
 
-    public OpenAiClient(HttpClient httpClient, String apiUrl,
-                        String apiKey, String modelName, int maxTokens) {
-        this.httpClient = httpClient;
-        this.apiUrl = apiUrl;
-        this.apiKey = apiKey;
-        this.modelName = modelName;
-        this.maxTokens = maxTokens;
+    public OpenAiClient(HttpClient http, String url, String key, String model, int maxTokens) {
+        this.http = http; this.url = url; this.key = key; this.model = model; this.maxTokens = maxTokens;
     }
 
     @Override
-    public String send(String systemInstruction, List<ChatMessage> messages) {
-        JsonArray msgs = new JsonArray();
-        if (systemInstruction != null && !systemInstruction.isEmpty()) {
-            JsonObject sys = new JsonObject();
-            sys.addProperty("role", "system");
-            sys.addProperty("content", systemInstruction);
-            msgs.add(sys);
+    public String send(String system, List<ChatMessage> messages) {
+        JsonArray arr = new JsonArray();
+        if (system != null && !system.isEmpty()) {
+            JsonObject s = new JsonObject();
+            s.addProperty("role", "system");
+            s.addProperty("content", system);
+            arr.add(s);
         }
-        for (ChatMessage msg : messages) {
-            JsonObject m = new JsonObject();
-            m.addProperty("role", msg.role());
-            m.addProperty("content", msg.content());
-            msgs.add(m);
+        for (ChatMessage m : messages) {
+            JsonObject o = new JsonObject();
+            o.addProperty("role", m.role());
+            o.addProperty("content", m.content());
+            arr.add(o);
         }
-
         JsonObject body = new JsonObject();
-        body.addProperty("model", modelName);
+        body.addProperty("model", model);
         body.addProperty("max_completion_tokens", maxTokens);
-        body.add("messages", msgs);
+        body.add("messages", arr);
 
         try {
             HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create(apiUrl))
+                    .uri(URI.create(url))
                     .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Authorization", "Bearer " + key)
                     .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                     .build();
+            HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() != 200) return "[GPT ERROR " + resp.statusCode() + "] " + resp.body();
 
-            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() != 200) {
-                return "[GPT ERROR " + resp.statusCode() + "] " + resp.body();
-            }
-
-            JsonObject root = JsonParser.parseString(resp.body()).getAsJsonObject();
-            return root.getAsJsonArray("choices")
-                    .get(0).getAsJsonObject()
-                    .getAsJsonObject("message")
-                    .get("content").getAsString();
+            return JsonParser.parseString(resp.body()).getAsJsonObject()
+                    .getAsJsonArray("choices").get(0).getAsJsonObject()
+                    .getAsJsonObject("message").get("content").getAsString();
         } catch (Exception e) {
             return "[GPT ERROR] " + e.getMessage();
         }

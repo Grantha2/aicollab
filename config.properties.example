@@ -1,39 +1,20 @@
-# ============================================================
-# config.properties.example — Template for API key configuration
-# ============================================================
+# config.properties.example — template for API key configuration.
 #
-# You DON'T need to copy or edit this file manually.
-# Just run the program — it will prompt you for your keys
-# on first launch and create config.properties automatically.
+# Copy this file to config.properties and fill in your API keys.
+# config.properties is gitignored; never commit it.
 #
-# This file exists as a reference so you know what keys are
-# needed and where to get them.
-#
-# WHERE TO GET KEYS:
+# Where to get keys:
 #   Anthropic (Claude): https://console.anthropic.com/settings/keys
 #   OpenAI (GPT):       https://platform.openai.com/api-keys
 #   Google (Gemini):    https://aistudio.google.com/apikey
-#
-# NEVER commit config.properties to Git (it's in .gitignore).
-# ============================================================
 
-# --- API Keys (paste your real keys here) ---
 claude.key=YOUR_CLAUDE_KEY_HERE
 openai.key=YOUR_OPENAI_KEY_HERE
 gemini.key=YOUR_GEMINI_KEY_HERE
 
-# --- Model Names (defaults are fine, change if you need a different model) ---
-claude.model=claude-sonnet-4-20250514
-openai.model=gpt-4o
-gemini.model=gemini-2.5-flash
-
-# --- Tuning Parameters ---
-# Maximum tokens each model can return per API call
-max.response.tokens=8192
-
-# How many rounds of cross-reaction in Phase 2 (1 = standard, 2+ = deeper debate)
-debate.rounds=1
-
-# Max characters of conversation history to include in prompts
-# Prevents prompts from growing too large. ~4 chars per token.
-max.history.chars=24000
+# Optional overrides; omit to use the defaults baked into Config.java.
+# claude.model=claude-opus-4-6
+# openai.model=gpt-5.4-mini
+# gemini.model=gemini-3.1-pro-preview
+# max.response.tokens=8192
+# debate.rounds=1

@@ -11,65 +11,48 @@ import java.net.http.HttpResponse;
 import java.util.List;
 
 public class AnthropicClient implements LlmClient {
-
-    private final HttpClient httpClient;
-    private final String apiUrl;
-    private final String apiKey;
-    private final String modelName;
+    private final HttpClient http;
+    private final String url, key, model;
     private final int maxTokens;
 
-    public AnthropicClient(HttpClient httpClient, String apiUrl,
-                           String apiKey, String modelName, int maxTokens) {
-        this.httpClient = httpClient;
-        this.apiUrl = apiUrl;
-        this.apiKey = apiKey;
-        this.modelName = modelName;
-        this.maxTokens = maxTokens;
+    public AnthropicClient(HttpClient http, String url, String key, String model, int maxTokens) {
+        this.http = http; this.url = url; this.key = key; this.model = model; this.maxTokens = maxTokens;
     }
 
     @Override
-    public String send(String systemInstruction, List<ChatMessage> messages) {
+    public String send(String system, List<ChatMessage> messages) {
         JsonObject body = new JsonObject();
-        body.addProperty("model", modelName);
+        body.addProperty("model", model);
         body.addProperty("max_tokens", maxTokens);
+        if (system != null && !system.isEmpty()) body.addProperty("system", system);
 
-        if (systemInstruction != null && !systemInstruction.isEmpty()) {
-            body.addProperty("system", systemInstruction);
+        JsonArray arr = new JsonArray();
+        for (ChatMessage m : messages) {
+            JsonObject o = new JsonObject();
+            o.addProperty("role", m.role());
+            o.addProperty("content", m.content());
+            arr.add(o);
         }
-
-        JsonArray msgArr = new JsonArray();
-        for (ChatMessage msg : messages) {
-            JsonObject m = new JsonObject();
-            m.addProperty("role", msg.role());
-            m.addProperty("content", msg.content());
-            msgArr.add(m);
-        }
-        body.add("messages", msgArr);
+        body.add("messages", arr);
 
         try {
             HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create(apiUrl))
+                    .uri(URI.create(url))
                     .header("Content-Type", "application/json")
-                    .header("x-api-key", apiKey)
+                    .header("x-api-key", key)
                     .header("anthropic-version", "2023-06-01")
                     .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                     .build();
+            HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() != 200) return "[Claude ERROR " + resp.statusCode() + "] " + resp.body();
 
-            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() != 200) {
-                return "[Claude ERROR " + resp.statusCode() + "] " + resp.body();
-            }
-
-            JsonObject root = JsonParser.parseString(resp.body()).getAsJsonObject();
-            JsonArray content = root.getAsJsonArray("content");
-            StringBuilder sb = new StringBuilder();
+            JsonArray content = JsonParser.parseString(resp.body()).getAsJsonObject().getAsJsonArray("content");
+            StringBuilder out = new StringBuilder();
             for (int i = 0; i < content.size(); i++) {
                 JsonObject block = content.get(i).getAsJsonObject();
-                if ("text".equals(block.get("type").getAsString()) && block.has("text")) {
-                    sb.append(block.get("text").getAsString());
-                }
+                if ("text".equals(block.get("type").getAsString())) out.append(block.get("text").getAsString());
             }
-            return sb.toString();
+            return out.toString();
         } catch (Exception e) {
             return "[Claude ERROR] " + e.getMessage();
         }

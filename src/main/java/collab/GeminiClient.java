@@ -4,7 +4,6 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
-import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -13,119 +12,62 @@ import java.time.Duration;
 import java.util.List;
 
 public class GeminiClient implements LlmClient {
-
-    private final HttpClient httpClient;
-    private final String apiKey;
-    private final String modelName;
+    private final HttpClient http;
+    private final String key, model;
     private final int maxTokens;
 
-    private static final int MAX_RETRIES = 3;
-    private static final long INITIAL_BACKOFF_MS = 1000L;
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(120);
-
-    public GeminiClient(HttpClient httpClient, String apiKey,
-                        String modelName, int maxTokens) {
-        this.httpClient = httpClient;
-        this.apiKey = apiKey;
-        this.modelName = modelName;
-        this.maxTokens = maxTokens;
+    public GeminiClient(HttpClient http, String key, String model, int maxTokens) {
+        this.http = http; this.key = key; this.model = model; this.maxTokens = maxTokens;
     }
 
     @Override
-    public String send(String systemInstruction, List<ChatMessage> messages) {
+    public String send(String system, List<ChatMessage> messages) {
         JsonObject body = new JsonObject();
-
-        if (systemInstruction != null && !systemInstruction.isEmpty()) {
-            JsonObject sysInstr = new JsonObject();
-            JsonArray parts = new JsonArray();
-            JsonObject part = new JsonObject();
-            part.addProperty("text", systemInstruction);
-            parts.add(part);
-            sysInstr.add("parts", parts);
-            body.add("system_instruction", sysInstr);
-        }
-
+        if (system != null && !system.isEmpty()) body.add("system_instruction", textParts(system));
         JsonArray contents = new JsonArray();
-        for (ChatMessage msg : messages) {
-            JsonObject entry = new JsonObject();
-            entry.addProperty("role", "assistant".equals(msg.role()) ? "model" : msg.role());
-            JsonArray parts = new JsonArray();
-            JsonObject part = new JsonObject();
-            part.addProperty("text", msg.content());
-            parts.add(part);
-            entry.add("parts", parts);
+        for (ChatMessage m : messages) {
+            JsonObject entry = textParts(m.content());
+            entry.addProperty("role", "assistant".equals(m.role()) ? "model" : m.role());
             contents.add(entry);
         }
         body.add("contents", contents);
-
-        JsonObject genConfig = new JsonObject();
-        genConfig.addProperty("maxOutputTokens", maxTokens);
-        body.add("generationConfig", genConfig);
+        JsonObject gen = new JsonObject(); gen.addProperty("maxOutputTokens", maxTokens);
+        body.add("generationConfig", gen);
 
         String url = "https://generativelanguage.googleapis.com/v1beta/models/"
-                + modelName + ":generateContent?key=" + apiKey;
-
-        HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .header("Content-Type", "application/json")
-                .timeout(REQUEST_TIMEOUT)
-                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-                .build();
-
-        HttpResponse<String> resp = sendWithRetry(req);
-        if (resp == null) {
-            return "[Gemini ERROR] Request failed after retries.";
-        }
-        if (resp.statusCode() != 200) {
-            return "[Gemini ERROR " + resp.statusCode() + "] " + resp.body();
-        }
-
+                + model + ":generateContent?key=" + key;
         try {
-            JsonObject root = JsonParser.parseString(resp.body()).getAsJsonObject();
-            JsonArray candidates = root.getAsJsonArray("candidates");
-            if (candidates == null || candidates.isEmpty()) return "";
-            JsonObject candidate = candidates.get(0).getAsJsonObject();
-            JsonArray parts = candidate.getAsJsonObject("content").getAsJsonArray("parts");
-            StringBuilder sb = new StringBuilder();
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(120))
+                    .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                    .build();
+            HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() != 200) return "[Gemini ERROR " + resp.statusCode() + "] " + resp.body();
+
+            JsonArray parts = JsonParser.parseString(resp.body()).getAsJsonObject()
+                    .getAsJsonArray("candidates").get(0).getAsJsonObject()
+                    .getAsJsonObject("content").getAsJsonArray("parts");
+            StringBuilder out = new StringBuilder();
             for (int i = 0; i < parts.size(); i++) {
-                JsonObject part = parts.get(i).getAsJsonObject();
-                if (part.has("text")) sb.append(part.get("text").getAsString());
+                JsonObject p = parts.get(i).getAsJsonObject();
+                if (p.has("text")) out.append(p.get("text").getAsString());
             }
-            return sb.toString();
+            return out.toString();
         } catch (Exception e) {
-            return "[Gemini PARSE ERROR] " + e.getMessage() + "\nRaw: " + resp.body();
+            return "[Gemini ERROR] " + e.getMessage();
         }
     }
 
-    private HttpResponse<String> sendWithRetry(HttpRequest request) {
-        long backoffMs = INITIAL_BACKOFF_MS;
-        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-            try {
-                HttpResponse<String> resp = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-                if (isTransientStatus(resp.statusCode()) && attempt < MAX_RETRIES) {
-                    sleepQuietly(backoffMs);
-                    backoffMs *= 2;
-                    continue;
-                }
-                return resp;
-            } catch (IOException ioe) {
-                if (attempt >= MAX_RETRIES) return null;
-                sleepQuietly(backoffMs);
-                backoffMs *= 2;
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                return null;
-            }
-        }
-        return null;
-    }
-
-    private static boolean isTransientStatus(int status) {
-        return status == 408 || status == 425 || status == 429 || status == 499
-                || (status >= 500 && status <= 599);
-    }
-
-    private static void sleepQuietly(long millis) {
-        try { Thread.sleep(millis); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+    // Gemini's "content" objects wrap text inside a parts array.
+    // This helper builds the {parts:[{text:"..."}]} shape used both
+    // for system_instruction and for each content entry.
+    private static JsonObject textParts(String text) {
+        JsonObject o = new JsonObject();
+        JsonArray parts = new JsonArray();
+        JsonObject p = new JsonObject(); p.addProperty("text", text); parts.add(p);
+        o.add("parts", parts);
+        return o;
     }
 }
