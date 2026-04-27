@@ -90,8 +90,18 @@ public class PromptBuilder {
         if (controller != null && !controller.shouldIncludeStakeholderProfile()) return "";
         return s.toBriefing();
     }
+    /**
+     * Returns history block respecting the controller toggle.
+     * The toggle only applies to Claude since GPT/Gemini maintain
+     * history via their stateful APIs.
+     */
     private String effectiveHistory() {
         if (controller != null && !controller.shouldIncludeHistory()) return "";
+        return context.getHistoryBlock();
+    }
+
+    /** Returns history block unconditionally (for stateful API providers). */
+    private String alwaysHistory() {
         return context.getHistoryBlock();
     }
 
@@ -127,12 +137,27 @@ public class PromptBuilder {
     // This is the single source of layered context and should be
     // passed as the system instruction for all phases.
     // ============================================================
+    /**
+     * Builds system instruction for Claude (history respects toggle).
+     */
     public String buildSystemInstruction(AgentProfile agent,
                                          StakeholderProfile stakeholder) {
         return effectiveTeamContext()
              + effectiveAgentBriefing(agent)
              + effectiveStakeholderBriefing(stakeholder)
              + effectiveHistory();
+    }
+
+    /**
+     * Builds system instruction for stateful providers (GPT/Gemini).
+     * Always includes history since the toggle only applies to Claude.
+     */
+    public String buildStatefulSystemInstruction(AgentProfile agent,
+                                                  StakeholderProfile stakeholder) {
+        return effectiveTeamContext()
+             + effectiveAgentBriefing(agent)
+             + effectiveStakeholderBriefing(stakeholder)
+             + alwaysHistory();
     }
 
     // ============================================================

@@ -673,7 +673,7 @@ public class ContextControlDialog extends JDialog {
         JPanel panel = new JPanel(new BorderLayout(8, 8));
         panel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
-        JCheckBox toggle = new JCheckBox("Include conversation history in prompts",
+        JCheckBox toggle = new JCheckBox("Include conversation history in Claude prompts",
                 controller.shouldIncludeHistory());
         toggle.addActionListener(e -> controller.setIncludeHistory(toggle.isSelected()));
 
@@ -685,7 +685,14 @@ public class ContextControlDialog extends JDialog {
         JPanel topPanel = new JPanel(new BorderLayout());
         topPanel.add(toggle, BorderLayout.WEST);
         topPanel.add(stats, BorderLayout.EAST);
-        panel.add(topPanel, BorderLayout.NORTH);
+        JLabel note = new JLabel("GPT and Gemini maintain conversation history via their stateful APIs.");
+        note.setFont(note.getFont().deriveFont(Font.ITALIC, 11f));
+        note.setForeground(new Color(120, 120, 120));
+        JPanel topWrapper = new JPanel();
+        topWrapper.setLayout(new BoxLayout(topWrapper, BoxLayout.Y_AXIS));
+        topWrapper.add(topPanel);
+        topWrapper.add(note);
+        panel.add(topWrapper, BorderLayout.NORTH);
 
         JTextArea historyArea = new JTextArea(historyText.isEmpty()
                 ? "(No conversation history yet)" : historyText);
