@@ -156,12 +156,12 @@ public class ButtonPanel extends JPanel {
             card.setToolTipText(btn.getDescription());
         }
 
+        card.setComponentPopupMenu(buildContextMenu(btn));
+
         card.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                if (SwingUtilities.isRightMouseButton(e)) {
-                    showContextMenu(e, btn);
-                } else if (clickListener != null) {
+                if (!e.isPopupTrigger() && SwingUtilities.isLeftMouseButton(e) && clickListener != null) {
                     clickListener.onButtonClicked(btn);
                 }
             }
@@ -179,7 +179,7 @@ public class ButtonPanel extends JPanel {
         return card;
     }
 
-    private void showContextMenu(MouseEvent e, SuiteButton btn) {
+    private JPopupMenu buildContextMenu(SuiteButton btn) {
         JPopupMenu menu = new JPopupMenu();
         JMenuItem edit = new JMenuItem("Edit");
         edit.addActionListener(ev -> {
@@ -191,7 +191,7 @@ public class ButtonPanel extends JPanel {
         });
         menu.add(edit);
         menu.add(delete);
-        menu.show(e.getComponent(), e.getX(), e.getY());
+        return menu;
     }
 
     private Color textColorFor(Color bg) {
