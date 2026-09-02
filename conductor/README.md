@@ -13,7 +13,7 @@ Code) or a human team. The user never writes a prompt and never sees an API key.
 
 ## Quick start
 
-Prerequisites: Java 21 and Maven 3.9+.
+Prerequisites: Java 21 and Maven.
 
 ```bash
 cd conductor
@@ -31,7 +31,7 @@ the file is optional and has a default: model names, endpoint overrides, `max.to
 (16000), `debate.rounds` (1), and the OpenClaw block (off unless `openclaw.base.url` is set).
 
 `.mvn/jvm.config` turns on HiDPI scaling for the Maven JVM, which is where `exec:java`
-runs the GUI. `Main` sets the same properties when you run the jar directly.
+runs the GUI. `Main` sets the same properties when `conductor.Main` is started outside Maven.
 
 ## How a session works
 
@@ -69,8 +69,8 @@ saved. Completing a stage again replaces its artifact.
 
 ## Where your data lives
 
-Everything is written next to the working directory you launch from. All of it is
-gitignored. Delete a file to reset that piece.
+Everything is written in the working directory you launch from. All of it is gitignored.
+Delete a file to reset that piece.
 
 | File | Holds | Reset by |
 |---|---|---|
