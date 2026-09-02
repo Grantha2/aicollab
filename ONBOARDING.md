@@ -19,7 +19,9 @@ Top MCP Servers:
 ## Your Setup Checklist
 
 ### Codebases
-- [ ] aicollab — https://github.com/grantha2/aicollab
+- [ ] conductor — https://github.com/Grantha2/conductor (on-rails multi-agent SDLC copilot; see `conductor/README.md`)
+- [ ] cowork-suite — https://github.com/Grantha2/cowork-suite (button-driven AI task suite; see `cowork-suite/README.md`)
+- [ ] aicollab — https://github.com/Grantha2/aicollab (archive of the pre-split prototype; read `MIGRATION.md` once, then ignore)
 
 ### MCP Servers to Activate
 - [ ] github — Read PRs, post comments, check CI, manage branches and issues against `grantha2/aicollab`. Ask the repo owner to grant you push access, then configure the GitHub MCP server in your Claude Code settings.
