@@ -1,0 +1,36 @@
+# --- Secrets: never commit ---
+config.properties
+*.key
+.env
+
+# --- Runtime data written by the app (local to each user; may contain PII) ---
+buttons.json
+org_context.json
+initiatives.json
+relationships.json
+operational_feeds.json
+workflows.json
+context_changelog.jsonl
+api_request_log.jsonl
+api_request_log.*.jsonl
+*.log
+
+# If COWORK_HOME points inside the repo, ignore that whole tree too.
+/data/
+
+# --- Build output ---
+target/
+bin/
+*.class
+
+# --- IDE ---
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+.vscode/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
