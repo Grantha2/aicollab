@@ -63,6 +63,26 @@ class PanelTest {
     }
 
     @Test
+    void twoPanelistsZeroRoundsMakesThreeCallsAndNeverPassesNullToTheListener() {
+        var panel = new Panel(List.<AgentClient>of(a, b), panelists.subList(0, 2), 0, 100);
+        assertEquals(3, panel.apiCallCount());
+        var kinds = new ArrayList<String>();
+        panel.debate(null, "q", (kind, who, text) -> {
+            assertNotNull(kind);
+            assertNotNull(who);
+            assertNotNull(text);
+            kinds.add(kind);
+        });
+        assertEquals(3, a.requests.size() + b.requests.size());
+        assertFalse(kinds.contains("phase2"));
+        assertTrue(kinds.contains("synthesis"));
+        String synth = a.requests.get(1).messages().get(0).content();
+        assertFalse(synth.contains("Final positions"), "no rounds -> no final-positions section");
+        assertTrue(synth.contains("B #1"), "synthesis quotes the other seat's phase-1 answer");
+        assertEquals(a.requests.get(0).system(), a.requests.get(1).system(), "byte-identical system prefix so the cache hits");
+    }
+
+    @Test
     void rejectsMismatchedOrTooSmallPanels() {
         assertThrows(IllegalArgumentException.class, () -> new Panel(List.of(a, b), panelists, 1, 100));
         assertThrows(IllegalArgumentException.class, () -> new Panel(List.of(a), panelists.subList(0, 1), 1, 100));

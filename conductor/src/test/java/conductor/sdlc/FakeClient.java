@@ -21,16 +21,16 @@ final class FakeClient implements AgentClient {
     private final Deque<String> replies;
     private final String error;
 
-    FakeClient(String name, String... replies) { this(name, null, replies); }
+    FakeClient(String name, String... replies) { this(name, null, List.of(replies)); }
 
-    private FakeClient(String name, String error, String... replies) {
+    private FakeClient(String name, String error, List<String> replies) {
         this.name = name;
         this.error = error;
-        this.replies = new ArrayDeque<>(List.of(replies));
+        this.replies = new ArrayDeque<>(replies);
     }
 
     /** A client whose every call fails with {@code error}. */
-    static FakeClient failing(String name, String error) { return new FakeClient(name, error); }
+    static FakeClient failing(String name, String error) { return new FakeClient(name, error, List.of()); }
 
     @Override public String providerName() { return name; }
 

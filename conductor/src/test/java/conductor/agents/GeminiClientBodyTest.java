@@ -1,6 +1,7 @@
 package conductor.agents;
 
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
 import java.net.http.HttpClient;
@@ -73,5 +74,60 @@ class GeminiClientBodyTest {
         var fr = user.getAsJsonArray("parts").get(0).getAsJsonObject().getAsJsonObject("functionResponse");
         assertEquals("lookup", fr.get("name").getAsString(), "result keyed by function name, not call id");
         assertEquals("one", fr.getAsJsonObject("response").get("content").getAsString());
+    }
+
+    @Test
+    void additionalPropertiesIsStrippedFromToolAndResponseSchemas() {
+        var strict = JsonParser.parseString("""
+                {"type":"object","additionalProperties":false,
+                 "properties":{"inner":{"type":"object","additionalProperties":false,"properties":{"q":{"type":"string"}}}}}""")
+                .getAsJsonObject();
+        var body = client.buildBody(new AgentRequest("s", List.of(ChatMessage.user("q")),
+                List.of(new ToolSpec("lookup", "d", strict)), strict, 10));
+
+        var params = body.getAsJsonArray("tools").get(0).getAsJsonObject()
+                .getAsJsonArray("functionDeclarations").get(0).getAsJsonObject().getAsJsonObject("parameters");
+        assertFalse(params.has("additionalProperties"));
+        assertFalse(params.getAsJsonObject("properties").getAsJsonObject("inner").has("additionalProperties"), "stripped at every depth");
+        assertTrue(params.getAsJsonObject("properties").getAsJsonObject("inner").has("properties"), "everything else kept");
+        assertFalse(body.getAsJsonObject("generationConfig").getAsJsonObject("responseSchema").has("additionalProperties"));
+        assertTrue(strict.has("additionalProperties"), "the caller's schema is not mutated");
+    }
+
+    private static AgentResponse sendWith(String responseBody) {
+        var stub = new StubHttpClient().reply(200, responseBody);
+        return new GeminiClient(stub, KEY, "gemini-3.1-pro-preview")
+                .send(AgentRequest.text("s", List.of(ChatMessage.user("q")), 10));
+    }
+
+    @Test
+    void emptyCandidatesIsARefusalNotAnException() {
+        var r = sendWith("{\"promptFeedback\":{\"blockReason\":\"SAFETY\"},\"usageMetadata\":{\"promptTokenCount\":5}}");
+        assertTrue(r.ok());
+        assertTrue(r.refused());
+        assertTrue(r.text().contains("SAFETY"), r.text());
+        assertEquals(5, r.inputTokens());
+
+        var empty = sendWith("{}");
+        assertTrue(empty.ok() && empty.refused() && !empty.text().isBlank());
+        var malformed = assertDoesNotThrow(() -> sendWith("{\"candidates\":[42]}"));
+        assertFalse(malformed.ok(), "a non-object candidate becomes an error response");
+    }
+
+    @Test
+    void thoughtPartsAreSkippedAndFunctionCallsGetClientMintedIds() {
+        var r = sendWith("""
+                {"candidates":[{"content":{"role":"model","parts":[
+                   {"text":"internal reasoning","thought":true},
+                   {"functionCall":{"name":"lookup","args":{"q":"x"}}}]},"finishReason":"STOP"}],
+                 "usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2}}""");
+        assertTrue(r.ok(), r.error());
+        assertEquals("", r.text(), "thought summaries are not the answer");
+        assertEquals("tool_use", r.stopReason());
+        var call = r.toolCalls().get(0);
+        assertEquals("lookup", call.name());
+        assertTrue(call.id().startsWith("lookup-") && call.id().length() > "lookup-".length(), call.id());
+        assertEquals("x", call.arguments().get("q").getAsString());
+        assertEquals(2, r.outputTokens());
     }
 }

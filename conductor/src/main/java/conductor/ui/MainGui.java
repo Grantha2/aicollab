@@ -44,28 +44,21 @@ public class MainGui extends JFrame {
     private boolean busy;
 
     private final JLabel nameLabel = new JLabel();
+    private final JToolBar toolbar = new JToolBar();
     private final JList<Stage> stageList = new JList<>(Stage.values());
     private final JPanel form = new JPanel();
     private final Map<String, JTextArea> fields = new LinkedHashMap<>();
-    private final JTextArea artifactView = new JTextArea();
+    private final JTextArea artifactView = textArea("", 0, 0);
     private final JLabel status = new JLabel(" ");
     private final JButton completeButton = new JButton("Complete stage");
     private final JButton handOffButton = new JButton("Hand off to OpenClaw");
-    private final List<AbstractButton> toolbarButtons = new ArrayList<>();
 
     public static void launch() {
         FlatLightLaf.setup();
         Config config;
-        try {
-            config = new Config(Config.defaultPath());
-        } catch (IOException e) {
-            fail(e.getMessage());
-            return;
-        }
-        if (!config.hasAllKeys()) {
-            fail("config.properties is missing one or more API keys (anthropic.key, openai.key, gemini.key).");
-            return;
-        }
+        try { config = new Config(Config.defaultPath()); }
+        catch (IOException e) { fail(e.getMessage()); return; }
+        if (!config.hasAllKeys()) { fail("config.properties is missing one or more API keys (anthropic.key, openai.key, gemini.key)."); return; }
         SwingUtilities.invokeLater(() -> new MainGui(new Wiring(config)).setVisible(true));
     }
 
@@ -79,7 +72,12 @@ public class MainGui extends JFrame {
         this.wiring = wiring;
         this.panelists = wiring.loadPanelists();
         this.runner = wiring.runner(panelists, Wiring.loadContext());
-        setJMenuBar(buildMenu());
+        JMenu settings = new JMenu("Settings");
+        settings.add(wire(new JMenuItem("Panelists..."), this::editPanelists));
+        settings.add(wire(new JMenuItem("Context..."), this::editContext));
+        JMenuBar menuBar = new JMenuBar();
+        menuBar.add(settings);
+        setJMenuBar(menuBar);
         add(buildToolbar(), BorderLayout.NORTH);
         add(buildStageList(), BorderLayout.WEST);
         add(buildCentre(), BorderLayout.CENTER);
@@ -96,29 +94,17 @@ public class MainGui extends JFrame {
         setProject(first != null ? first : new Project("Untitled project"));
     }
 
-    // ---- layout ---------------------------------------------------------------------------------
-
-    private JMenuBar buildMenu() {
-        JMenu settings = new JMenu("Settings");
-        settings.add(menuItem("Panelists...", this::editPanelists));
-        settings.add(menuItem("Context...", this::editContext));
-        JMenuBar bar = new JMenuBar();
-        bar.add(settings);
-        return bar;
-    }
-
     private JToolBar buildToolbar() {
-        JToolBar bar = new JToolBar();
-        bar.setFloatable(false);
+        toolbar.setFloatable(false);
         nameLabel.setFont(nameLabel.getFont().deriveFont(Font.BOLD, nameLabel.getFont().getSize() + 3f));
         nameLabel.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 16));
-        bar.add(nameLabel);
-        bar.add(button("New project...", this::newProject));
-        bar.add(button("Open...", this::openProject));
-        bar.add(Box.createHorizontalGlue());
+        toolbar.add(nameLabel);
+        toolbar.add(wire(new JButton("New project..."), this::newProject));
+        toolbar.add(wire(new JButton("Open..."), this::openProject));
+        toolbar.add(Box.createHorizontalGlue());
         handOffButton.setToolTipText("Send the build brief to your OpenClaw agent (1 API call)");
-        bar.add(button(handOffButton, this::handOff));
-        return bar;
+        toolbar.add(wire(handOffButton, this::handOff));
+        return toolbar;
     }
 
     private JComponent buildStageList() {
@@ -148,25 +134,19 @@ public class MainGui extends JFrame {
         JScrollPane formScroll = new JScrollPane(top);
         formScroll.getVerticalScrollBar().setUnitIncrement(16);
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        buttons.add(button(completeButton, this::completeStage));
+        buttons.add(wire(completeButton, this::completeStage));
         JPanel left = new JPanel(new BorderLayout());
         left.add(formScroll, BorderLayout.CENTER);
         left.add(buttons, BorderLayout.SOUTH);
-
         artifactView.setEditable(false);
-        artifactView.setLineWrap(true);
-        artifactView.setWrapStyleWord(true);
         artifactView.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
         artifactView.setMargin(new Insets(8, 8, 8, 8));
         JScrollPane right = new JScrollPane(artifactView);
         right.setBorder(BorderFactory.createTitledBorder("Stage output"));
-
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
         split.setResizeWeight(0.55);
         return split;
     }
-
-    // ---- projects and stages --------------------------------------------------------------------
 
     private void setProject(Project p) {
         saveQuietly();
@@ -190,7 +170,7 @@ public class MainGui extends JFrame {
         List<String> slugs = store.listSlugs();
         if (slugs.isEmpty()) { setStatus("No saved projects yet - use New project."); return; }
         JComboBox<String> box = new JComboBox<>(slugs.toArray(String[]::new));
-        if (JOptionPane.showConfirmDialog(this, box, "Open project", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
+        if (!confirm(box, "Open project")) return;
         Project p = store.load((String) box.getSelectedItem());
         if (p == null) { setStatus("Could not open '" + box.getSelectedItem() + "' - see the terminal for details."); return; }
         setProject(p);
@@ -215,15 +195,12 @@ public class MainGui extends JFrame {
         handOffButton.setVisible(s == Stage.BUILD);
         handOffButton.setEnabled(!busy && wiring.config().openclawEnabled());
         int calls = runner.estimateCalls(project, s);
-        setStatus(calls == 0 ? "Completing this stage makes no API calls."
-                : "Completing this stage will make " + calls + " API call" + (calls == 1 ? "." : "s."));
+        setStatus(calls == 0 ? "Completing this stage makes no API calls." : "Completing this stage will make " + calls + " API call" + (calls == 1 ? "." : "s."));
         stageList.repaint();
     }
 
     private void addQuestion(Question q) {
-        JTextArea area = new JTextArea(project.answer(q.id()), 3, 40);
-        area.setLineWrap(true);
-        area.setWrapStyleWord(true);
+        JTextArea area = textArea(project.answer(q.id()), 3, 40);
         fields.put(q.id(), area);
         form.add(Box.createVerticalStrut(10));
         form.add(label(q.prompt() + (q.required() ? " *" : ""), Font.BOLD));
@@ -236,17 +213,14 @@ public class MainGui extends JFrame {
         scroll.setAlignmentX(LEFT_ALIGNMENT);
         form.add(scroll);
         if (q.agentAssist()) {
-            JButton assist = new JButton("Ask an agent to sharpen this");
+            JButton assist = wire(new JButton("Ask an agent to sharpen this"), () -> assist(q, area));
             assist.setToolTipText("1 API call to " + wiring.lead().modelName());
             assist.setEnabled(!busy);
-            assist.addActionListener(e -> assist(q, area));
             assist.setAlignmentX(LEFT_ALIGNMENT);
             form.add(Box.createVerticalStrut(4));
             form.add(assist);
         }
     }
-
-    // ---- agent actions --------------------------------------------------------------------------
 
     private void completeStage() {
         commitFields();
@@ -255,7 +229,7 @@ public class MainGui extends JFrame {
                 .filter(q -> q.required() && project.answer(q.id()).isBlank()).map(Question::prompt).toList();
         if (!missing.isEmpty()) { setStatus("Please answer first: " + String.join(" | ", missing)); return; }
         int calls = runner.estimateCalls(project, s);
-        if (calls > 0 && !confirm("Completing " + s.title() + " will make " + calls + " API call(s). Continue?")) return;
+        if (calls > 0 && !confirm("Completing " + s.title() + " will make " + calls + " API call(s). Continue?", "Conductor")) return;
         artifactView.setText("");   // the debate transcript streams in here while the panel works
         runInBackground("Completing " + s.title() + "...", () -> runner.complete(project, s, listener()), artifact -> {
             project.setArtifact(s, artifact);
@@ -277,10 +251,11 @@ public class MainGui extends JFrame {
     private void handOff() {
         commitFields();
         if (!project.isComplete(Stage.BUILD)) { setStatus("Complete the Build stage first - there is no brief to hand off."); return; }
-        if (!confirm("Send the build brief to OpenClaw? This will make 1 API call.")) return;
+        if (!confirm("Send the build brief to OpenClaw? This will make 1 API call.", "Conductor")) return;
         runInBackground("Handing off to OpenClaw...", () -> runner.handOffToOpenClaw(project), reply -> {
-            showText("OpenClaw replied", reply);
-            setStatus("OpenClaw replied.");
+            artifactView.setText(project.artifact(Stage.BUILD) + "\n\n---\n## OpenClaw reply\n\n" + reply);
+            artifactView.setCaretPosition(artifactView.getDocument().getLength());
+            setStatus("OpenClaw replied - see the end of the stage output.");
         });
     }
 
@@ -298,40 +273,27 @@ public class MainGui extends JFrame {
             @Override protected T doInBackground() { return work.get(); }
             @Override protected void done() {
                 setBusy(false);
-                try {
-                    onDone.accept(get());
-                } catch (Exception e) {
-                    Throwable cause = e.getCause() != null ? e.getCause() : e;
-                    setStatus("Something went wrong: " + cause);
-                }
+                try { onDone.accept(get()); }
+                catch (Exception e) { setStatus("Something went wrong: " + (e.getCause() != null ? e.getCause() : e)); }
             }
         }.execute();
     }
-
-    // ---- settings -------------------------------------------------------------------------------
 
     private void editPanelists() {
         Box box = Box.createVerticalBox();
         List<JTextComponent[]> rows = new ArrayList<>();
         for (Panelist p : panelists) {
-            JTextField name = new JTextField(p.name());
-            JTextField perspective = new JTextField(p.perspective());
-            JTextArea lens = new JTextArea(p.lens(), 3, 50);
-            lens.setLineWrap(true);
-            lens.setWrapStyleWord(true);
+            JTextComponent[] row = { new JTextField(p.name()), new JTextField(p.perspective()), textArea(p.lens(), 3, 50) };
             JPanel head = new JPanel(new GridLayout(2, 2, 8, 2));
-            head.add(new JLabel("Name"));
-            head.add(name);
-            head.add(new JLabel("Perspective"));
-            head.add(perspective);
+            for (Component c : List.of(new JLabel("Name"), row[0], new JLabel("Perspective"), row[1])) head.add(c);
             JPanel one = new JPanel(new BorderLayout(0, 4));
             one.setBorder(BorderFactory.createTitledBorder(p.name()));
             one.add(head, BorderLayout.NORTH);
-            one.add(new JScrollPane(lens), BorderLayout.CENTER);
+            one.add(new JScrollPane(row[2]), BorderLayout.CENTER);
             box.add(one);
-            rows.add(new JTextComponent[] { name, perspective, lens });
+            rows.add(row);
         }
-        if (JOptionPane.showConfirmDialog(this, box, "Panelists", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
+        if (!confirm(box, "Panelists")) return;
         List<Panelist> edited = rows.stream()
                 .map(r -> new Panelist(r[0].getText().strip(), r[1].getText().strip(), r[2].getText().strip())).toList();
         try {
@@ -339,27 +301,18 @@ public class MainGui extends JFrame {
             panelists = edited;
             runner = wiring.runner(panelists, Wiring.loadContext());
             setStatus("Panel saved to " + Wiring.PANELISTS_FILE + ".");
-        } catch (RuntimeException e) {
-            setStatus("Could not save panelists: " + e.getMessage());
-        }
+        } catch (RuntimeException e) { setStatus("Could not save panelists: " + e.getMessage()); }
     }
 
     private void editContext() {
-        JTextArea area = new JTextArea(Wiring.loadContext(), 15, 70);
-        area.setLineWrap(true);
-        area.setWrapStyleWord(true);
-        if (JOptionPane.showConfirmDialog(this, new JScrollPane(area), "Context sent with every agent call",
-                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
+        JTextArea area = textArea(Wiring.loadContext(), 15, 70);
+        if (!confirm(new JScrollPane(area), "Context sent with every agent call")) return;
         try {
             Files.writeString(Wiring.CONTEXT_FILE, area.getText());
             runner = wiring.runner(panelists, area.getText());
             setStatus("Context saved to " + Wiring.CONTEXT_FILE + ".");
-        } catch (IOException e) {
-            setStatus("Could not save context: " + e.getMessage());
-        }
+        } catch (IOException e) { setStatus("Could not save context: " + e.getMessage()); }
     }
-
-    // ---- small helpers --------------------------------------------------------------------------
 
     private void commitFields() {
         if (project == null) return;
@@ -369,47 +322,36 @@ public class MainGui extends JFrame {
     private void saveQuietly() {
         if (project == null) return;
         commitFields();
-        try {
-            store.save(project);
-        } catch (RuntimeException e) {
-            setStatus("Could not save: " + e.getMessage());
-        }
+        try { store.save(project); }
+        catch (RuntimeException e) { setStatus("Could not save: " + e.getMessage()); }
     }
 
     private void setBusy(boolean b) {
         busy = b;
         setCursor(b ? Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR) : Cursor.getDefaultCursor());
-        for (AbstractButton button : toolbarButtons) button.setEnabled(!b);
+        completeButton.setEnabled(!b);
+        for (Component c : toolbar.getComponents()) if (c instanceof AbstractButton button) button.setEnabled(!b);
+        for (Component c : form.getComponents()) if (c instanceof AbstractButton button) button.setEnabled(!b);
         handOffButton.setEnabled(!b && wiring.config().openclawEnabled());
-        for (Component c : form.getComponents()) if (c instanceof JButton button) button.setEnabled(!b);
     }
 
     private void setStatus(String text) { status.setText(text); }
 
-    private boolean confirm(String question) {
-        return JOptionPane.showConfirmDialog(this, question, "Conductor", JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION;
+    /** OK/Cancel dialog around any component (or a plain question). True when the user said OK. */
+    private boolean confirm(Object content, String title) {
+        return JOptionPane.showConfirmDialog(this, content, title, JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION;
     }
 
-    private void showText(String title, String text) {
-        JTextArea area = new JTextArea(text, 20, 70);
-        area.setEditable(false);
+    private static <B extends AbstractButton> B wire(B button, Runnable action) {
+        button.addActionListener(e -> action.run());
+        return button;
+    }
+
+    private static JTextArea textArea(String text, int rows, int cols) {
+        JTextArea area = new JTextArea(text, rows, cols);
         area.setLineWrap(true);
         area.setWrapStyleWord(true);
-        JOptionPane.showMessageDialog(this, new JScrollPane(area), title, JOptionPane.PLAIN_MESSAGE);
-    }
-
-    private JButton button(String text, Runnable action) { return button(new JButton(text), action); }
-
-    private JButton button(JButton b, Runnable action) {
-        b.addActionListener(e -> action.run());
-        toolbarButtons.add(b);
-        return b;
-    }
-
-    private static JMenuItem menuItem(String text, Runnable action) {
-        JMenuItem item = new JMenuItem(text);
-        item.addActionListener(e -> action.run());
-        return item;
+        return area;
     }
 
     private static JLabel label(String text, int style) {

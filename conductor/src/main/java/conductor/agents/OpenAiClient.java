@@ -21,6 +21,7 @@ public final class OpenAiClient implements AgentClient {
     private final HttpClient http;
     private final URI endpoint;
     private final Map<String, String> headers;
+    private final String key;
     private final String model;
     private final String provider;
 
@@ -31,7 +32,8 @@ public final class OpenAiClient implements AgentClient {
     OpenAiClient(HttpClient http, String url, String apiKey, String model, String provider) {
         this.http = http;
         this.endpoint = URI.create(url == null || url.isBlank() ? DEFAULT_URL : url);
-        this.headers = apiKey == null || apiKey.isBlank() ? Map.of() : Map.of("Authorization", "Bearer " + apiKey);
+        this.key = apiKey == null ? "" : apiKey;
+        this.headers = key.isBlank() ? Map.of() : Map.of("Authorization", "Bearer " + key);
         this.model = model;
         this.provider = provider;
     }
@@ -45,11 +47,11 @@ public final class OpenAiClient implements AgentClient {
             var response = Http.postJson(http, endpoint, headers, Json.GSON.toJson(buildBody(request)));
             if (response.statusCode() != 200) {
                 return AgentResponse.error("[" + provider + " HTTP " + response.statusCode() + "] "
-                        + Http.redactKeys(response.body()));
+                        + Http.redactKeys(response.body(), key));
             }
             return parse(Json.parseObject(response.body()));
         } catch (IOException | RuntimeException e) {
-            return AgentResponse.error("[" + provider + "] " + Http.redactKeys(String.valueOf(e.getMessage())));
+            return AgentResponse.error("[" + provider + "] " + Http.redactKeys(String.valueOf(e.getMessage()), key));
         }
     }
 
@@ -82,13 +84,13 @@ public final class OpenAiClient implements AgentClient {
             var tools = new JsonArray();
             for (var t : request.tools()) {
                 tools.add(Json.of("type", "function", "function", Json.of("name", t.name(),
-                        "description", t.description(), "parameters", t.inputSchema().deepCopy(), "strict", true)));
+                        "description", t.description(), "parameters", Json.closedObjects(t.inputSchema()), "strict", true)));
             }
             body.add("tools", tools);
         }
         if (request.wantsJson()) {
             body.add("response_format", Json.of("type", "json_schema", "json_schema",
-                    Json.of("name", "result", "schema", request.outputSchema().deepCopy(), "strict", true)));
+                    Json.of("name", "result", "schema", Json.closedObjects(request.outputSchema()), "strict", true)));
         }
         return body;
     }

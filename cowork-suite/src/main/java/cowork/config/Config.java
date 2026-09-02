@@ -14,10 +14,6 @@ import java.util.Properties;
 
 public class Config {
 
-    public static final String DEFAULT_MODEL = "claude-opus-5";
-    public static final String DEFAULT_URL = "https://api.anthropic.com/v1/messages";
-    public static final int DEFAULT_MAX_TOKENS = 16000;
-
     private final Properties props = new Properties();
     private final Path file;
 
@@ -33,32 +29,25 @@ public class Config {
     }
 
     public static Config load(Path file) throws IOException { return new Config(file); }
-
     public static Path defaultPath() { return AppPaths.data("config.properties"); }
 
     public Path file() { return file; }
-
-    public String getClaudeKey() {
-        String key = props.getProperty("claude.key");
-        return key == null ? null : key.trim();
-    }
-
-    public String getClaudeModel() { return getProperty("claude.model", DEFAULT_MODEL); }
-
-    public String getClaudeUrl() { return getProperty("claude.url", DEFAULT_URL); }
+    public String getClaudeKey() { return getProperty("claude.key", "").trim(); }
+    public String getClaudeModel() { return getProperty("claude.model", "claude-opus-5"); }
+    public String getClaudeUrl() { return getProperty("claude.url", "https://api.anthropic.com/v1/messages"); }
 
     public int getMaxResponseTokens() {
         try {
-            return Integer.parseInt(getProperty("max.response.tokens", "").trim());
+            return Integer.parseInt(getProperty("max.response.tokens", "16000").trim());
         } catch (NumberFormatException e) {
-            return DEFAULT_MAX_TOKENS;
+            return 16000;
         }
     }
 
-    /** True when a real key is configured — not blank, not the YOUR_… placeholder. */
+    /** True when a real key is configured: not blank and not the YOUR_... placeholder. */
     public boolean hasClaudeKey() {
         String key = getClaudeKey();
-        return key != null && !key.isBlank() && !key.startsWith("YOUR_");
+        return !key.isBlank() && !key.startsWith("YOUR_");
     }
 
     /** Returns the default when the key is missing or blank, so callers never null-check. */
@@ -70,11 +59,7 @@ public class Config {
     public void setProperty(String key, String value) { props.setProperty(key, value); }
 
     /** Defensive copy for editors that render every key. */
-    public Properties getProperties() {
-        Properties copy = new Properties();
-        copy.putAll(props);
-        return copy;
-    }
+    public Properties getProperties() { return (Properties) props.clone(); }
 
     public void save() throws IOException {
         try (OutputStream out = Files.newOutputStream(file)) {

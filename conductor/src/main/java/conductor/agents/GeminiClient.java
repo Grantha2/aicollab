@@ -25,12 +25,14 @@ public final class GeminiClient implements AgentClient {
     private final HttpClient http;
     private final URI endpoint;
     private final Map<String, String> headers;
+    private final String key;
     private final String model;
 
     public GeminiClient(HttpClient http, String apiKey, String model) {
         this.http = http;
         this.endpoint = URI.create(BASE + model + ":generateContent");
-        this.headers = Map.of("x-goog-api-key", apiKey);
+        this.key = apiKey == null ? "" : apiKey;
+        this.headers = Map.of("x-goog-api-key", key);
         this.model = model;
     }
 
@@ -46,11 +48,11 @@ public final class GeminiClient implements AgentClient {
             var response = Http.postJson(http, endpoint, headers, Json.GSON.toJson(buildBody(request)));
             if (response.statusCode() != 200) {
                 return AgentResponse.error("[gemini HTTP " + response.statusCode() + "] "
-                        + Http.redactKeys(response.body()));
+                        + Http.redactKeys(response.body(), key));
             }
             return parse(Json.parseObject(response.body()));
         } catch (IOException | RuntimeException e) {
-            return AgentResponse.error("[gemini] " + Http.redactKeys(String.valueOf(e.getMessage())));
+            return AgentResponse.error("[gemini] " + Http.redactKeys(String.valueOf(e.getMessage()), key));
         }
     }
 
@@ -89,14 +91,14 @@ public final class GeminiClient implements AgentClient {
             var declarations = new JsonArray();
             for (var t : request.tools()) {
                 declarations.add(Json.of("name", t.name(), "description", t.description(),
-                        "parameters", t.inputSchema().deepCopy()));
+                        "parameters", Json.withoutAdditionalProperties(t.inputSchema())));
             }
             body.add("tools", Json.arrayOf(Json.of("functionDeclarations", declarations)));
         }
         var generation = Json.of("maxOutputTokens", request.maxTokens());
         if (request.wantsJson()) {
             generation.addProperty("responseMimeType", "application/json");
-            generation.add("responseSchema", request.outputSchema().deepCopy());
+            generation.add("responseSchema", Json.withoutAdditionalProperties(request.outputSchema()));
         }
         body.add("generationConfig", generation);
         return body;

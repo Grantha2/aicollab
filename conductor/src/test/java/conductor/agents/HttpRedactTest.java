@@ -22,4 +22,13 @@ class HttpRedactTest {
         assertEquals("risk-free", Http.redactKeys("risk-free"));
         assertEquals("", Http.redactKeys(null));
     }
+
+    @Test
+    void masksProjectKeysAndTheConfiguredSecretLiteral() {
+        assertEquals("key sk-[redacted] end", Http.redactKeys("key sk-proj-AbCdEfGhIjKlMnOp end"));
+        assertEquals("token [redacted] rejected", Http.redactKeys("token gw-t0ken rejected", "gw-t0ken"));
+        assertEquals("plain", Http.redactKeys("plain", ""));
+        assertEquals("plain", Http.redactKeys("plain", null));
+        assertEquals("", Http.redactKeys(null, "x"));
+    }
 }

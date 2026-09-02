@@ -6,6 +6,7 @@ import com.google.gson.GsonBuilder;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.stream.Stream;
@@ -55,7 +56,9 @@ public final class ProjectStore {
             }
             return p;
         } catch (IOException | RuntimeException e) {
-            System.err.println("ProjectStore: cannot load " + file + ": " + e.getMessage());
+            String why = e instanceof NoSuchFileException ? "no such file"
+                    : String.valueOf(e.getMessage()).lines().findFirst().orElse(e.toString());   // Gson adds a help URL on line 2
+            System.err.println("ProjectStore: cannot load " + file + ": " + why);
             return null;
         }
     }

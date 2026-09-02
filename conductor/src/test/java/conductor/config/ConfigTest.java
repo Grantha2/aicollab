@@ -60,6 +60,16 @@ class ConfigTest {
     }
 
     @Test
+    void numericTyposFallBackToDefaultsInsteadOfCrashingStartup(@TempDir Path dir) throws IOException {
+        var file = dir.resolve("config.properties");
+        Files.writeString(file, "max.tokens=16k\ndebate.rounds=two\nopenclaw.base.url=   \n");
+        var c = new Config(file);
+        assertEquals(16000, c.maxTokens());
+        assertEquals(1, c.debateRounds());
+        assertFalse(c.openclawEnabled(), "whitespace-only base url means disabled");
+    }
+
+    @Test
     void missingFileExplainsWhatToDo(@TempDir Path dir) {
         var ex = assertThrows(IOException.class, () -> new Config(dir.resolve("nope.properties")));
         assertTrue(ex.getMessage().contains("not found"));

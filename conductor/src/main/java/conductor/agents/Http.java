@@ -26,15 +26,21 @@ final class Http {
     /**
      * Retries IOExceptions and 408/409/429/5xx (incl. 529) up to
      * {@value #MAX_RETRIES} times with 1s, 2s, 4s backoff, preferring the
-     * server's {@code retry-after} (seconds) when it sends one. Other 4xx
-     * are returned immediately: they will not fix themselves.
+     * server's {@code retry-after} (whole seconds, capped at 60s; the HTTP-date
+     * form is ignored) when it sends one. Other 4xx are returned immediately:
+     * they will not fix themselves. Worst case one call blocks for
+     * (MAX_RETRIES + 1) x TIMEOUT + MAX_RETRIES x 60s, i.e. about 23 minutes.
      */
     static HttpResponse<String> postJson(HttpClient http, URI uri,
                                          Map<String, String> headers, String body) throws IOException {
         var builder = HttpRequest.newBuilder(uri)
                 .timeout(TIMEOUT)
                 .POST(HttpRequest.BodyPublishers.ofString(body));
-        headers.forEach(builder::header);
+        try {
+            headers.forEach(builder::header);
+        } catch (IllegalArgumentException e) {   // the JDK's message quotes the offending value, i.e. the key
+            throw new IOException("A configured API key or token contains a character that is not allowed in an HTTP header");
+        }
         builder.setHeader("content-type", "application/json");
         var request = builder.build();
 
@@ -55,7 +61,14 @@ final class Http {
 
     /** Masks Anthropic/OpenAI ({@code sk-...}) and Google ({@code AIza...}) keys. */
     static String redactKeys(String text) {
-        return text == null ? "" : KEY.matcher(text).replaceAll("$1[redacted]");
+        return redactKeys(text, null);
+    }
+
+    /** As above, plus every occurrence of the exact configured {@code secret}: covers OpenClaw bearer tokens and any key format the pattern misses. */
+    static String redactKeys(String text, String secret) {
+        if (text == null) return "";
+        if (secret != null && !secret.isBlank()) text = text.replace(secret, "[redacted]");
+        return KEY.matcher(text).replaceAll("$1[redacted]");
     }
 
     private static boolean retryable(int status) {

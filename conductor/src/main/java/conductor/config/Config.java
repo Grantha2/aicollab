@@ -47,12 +47,21 @@ public final class Config {
     public String openclawToken()    { return get("openclaw.token", ""); }
     public String openclawAgentId()  { return get("openclaw.agent.id", "default"); }
 
-    public int maxTokens()    { return Integer.parseInt(get("max.tokens", "16000")); }
-    public int debateRounds() { return Integer.parseInt(get("debate.rounds", "1")); }
+    public int maxTokens()    { return getInt("max.tokens", 16000); }
+    public int debateRounds() { return getInt("debate.rounds", 1); }
 
     private String get(String key, String fallback) {
         String v = props.getProperty(key);
         return v == null || v.isBlank() ? fallback : v.strip();
+    }
+
+    /** A typo in a numeric setting falls back to the default instead of crashing startup. */
+    private int getInt(String key, int fallback) {
+        try {
+            return Integer.parseInt(get(key, String.valueOf(fallback)));
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     private static boolean isReal(String key) {

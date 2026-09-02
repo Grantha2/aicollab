@@ -16,7 +16,7 @@ api_request_log.*.jsonl
 *.log
 
 # If COWORK_HOME points inside the repo, ignore that whole tree too.
-data/
+/data/
 
 # --- Build output ---
 target/

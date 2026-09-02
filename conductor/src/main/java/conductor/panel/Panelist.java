@@ -18,6 +18,13 @@ public record Panelist(String name, String perspective, String lens) {
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
+    /** Gson passes null for fields missing from the JSON; callers (prompts, listeners) must never see one. */
+    public Panelist {
+        name = name == null ? "" : name;
+        perspective = perspective == null ? "" : perspective;
+        lens = lens == null ? "" : lens;
+    }
+
     /** Prompt-ready identity block, prepended to the system context for every call. */
     public String briefing() {
         return "=== YOUR AGENT IDENTITY ===\n"
@@ -26,12 +33,14 @@ public record Panelist(String name, String perspective, String lens) {
                 + lens + "\n\n";
     }
 
-    /** Reads the panel from disk; any problem (missing, unreadable, empty) yields {@link #defaults()}. */
+    /** Reads the panel from disk; any problem (missing, unreadable, empty, a seat without a name) yields {@link #defaults()}. */
     public static List<Panelist> loadAll(Path file) {
         try {
             if (!Files.isRegularFile(file)) return defaults();
             Panelist[] loaded = GSON.fromJson(Files.readString(file), Panelist[].class);
-            return loaded == null || loaded.length == 0 ? defaults() : List.of(loaded);
+            if (loaded == null || loaded.length == 0) return defaults();
+            for (Panelist p : loaded) if (p == null || p.name().isBlank()) return defaults();
+            return List.of(loaded);
         } catch (IOException | RuntimeException e) {
             return defaults();
         }

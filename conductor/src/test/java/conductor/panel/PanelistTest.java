@@ -33,4 +33,21 @@ class PanelistTest {
         assertEquals(Panelist.defaults(), Panelist.loadAll(file), "garbage -> defaults");
         assertEquals(3, Panelist.defaults().size());
     }
+
+    @Test
+    void missingJsonFieldsNeverBecomeNull(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("agents.json");
+        Files.writeString(file, "[{\"name\":\"A\"},{\"name\":\"B\",\"perspective\":\"p\"}]");
+        var loaded = Panelist.loadAll(file);
+        assertEquals(2, loaded.size());
+        assertEquals("", loaded.get(0).perspective());
+        assertEquals("", loaded.get(0).lens());
+        assertFalse(loaded.get(0).briefing().contains("null"));
+
+        Files.writeString(file, "[{\"perspective\":\"no name\"},{\"name\":\"B\"}]");
+        assertEquals(Panelist.defaults(), Panelist.loadAll(file), "a seat without a name -> defaults");
+        Files.writeString(file, "[null,{\"name\":\"B\"}]");
+        assertEquals(Panelist.defaults(), Panelist.loadAll(file), "a null seat -> defaults");
+        assertEquals("", new Panelist(null, null, null).name());
+    }
 }

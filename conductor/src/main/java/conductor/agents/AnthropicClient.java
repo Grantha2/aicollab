@@ -22,13 +22,15 @@ public final class AnthropicClient implements AgentClient {
     private final HttpClient http;
     private final URI endpoint;
     private final Map<String, String> headers;
+    private final String key;
     private final String model;
 
     public AnthropicClient(HttpClient http, String url, String apiKey, String model) {
         this.http = http;
         String base = (url == null || url.isBlank() ? DEFAULT_URL : url).replaceAll("/+$", "");
         this.endpoint = URI.create(base + "/v1/messages");
-        this.headers = Map.of("x-api-key", apiKey, "anthropic-version", "2023-06-01");
+        this.key = apiKey == null ? "" : apiKey;
+        this.headers = Map.of("x-api-key", key, "anthropic-version", "2023-06-01");
         this.model = model;
     }
 
@@ -41,11 +43,11 @@ public final class AnthropicClient implements AgentClient {
             var response = Http.postJson(http, endpoint, headers, Json.GSON.toJson(buildBody(request)));
             if (response.statusCode() != 200) {
                 return AgentResponse.error("[anthropic HTTP " + response.statusCode() + "] "
-                        + Http.redactKeys(response.body()));
+                        + Http.redactKeys(response.body(), key));
             }
             return parse(Json.parseObject(response.body()));
         } catch (IOException | RuntimeException e) {
-            return AgentResponse.error("[anthropic] " + Http.redactKeys(String.valueOf(e.getMessage())));
+            return AgentResponse.error("[anthropic] " + Http.redactKeys(String.valueOf(e.getMessage()), key));
         }
     }
 
@@ -63,7 +65,7 @@ public final class AnthropicClient implements AgentClient {
             var tools = new JsonArray();
             for (var t : request.tools()) {
                 tools.add(Json.of("name", t.name(), "description", t.description(),
-                        "input_schema", t.inputSchema().deepCopy(), "strict", true));
+                        "input_schema", Json.closedObjects(t.inputSchema()), "strict", true));
             }
             // Tools precede system in the cache prefix; one breakpoint on the last tool covers them all.
             tools.get(tools.size() - 1).getAsJsonObject().add("cache_control", ephemeral());
@@ -71,7 +73,7 @@ public final class AnthropicClient implements AgentClient {
         }
         if (request.wantsJson()) {
             body.add("output_config", Json.of("format",
-                    Json.of("type", "json_schema", "schema", request.outputSchema().deepCopy())));
+                    Json.of("type", "json_schema", "schema", Json.closedObjects(request.outputSchema()))));
         }
         return body;
     }

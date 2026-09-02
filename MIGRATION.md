@@ -55,6 +55,14 @@ git push -u origin main
 cd ..
 ```
 
+One binary could not be moved on GitHub: the room-reservation form PDF is
+still at the repo-root `assets/RSO-Facility-Request-Form.pdf`. Before the
+cowork-suite commit above, copy it in:
+
+```bash
+cp aicollab-src/assets/RSO-Facility-Request-Form.pdf cowork-suite/assets/
+```
+
 Then in each new repo: copy `config.properties.example` → `config.properties`,
 fill in your keys, and run `mvn compile exec:java`. Confirm both launch
 before doing anything else.

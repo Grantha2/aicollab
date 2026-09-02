@@ -5,10 +5,8 @@ import cowork.context.ProposedChange;
 import java.util.List;
 
 /**
- * Sink for everything an agentic task wants the user to see: a result card, AI-proposed
- * context changes awaiting approval, and a one-line status. Tasks depend only on this
- * interface so cowork.tasks never touches cowork.ui; the Agentic Routines panel implements
- * it. Tasks invoke these from the EDT (their SwingWorker.done()).
+ * What an agentic task shows the user: a result card, AI-proposed context changes awaiting
+ * approval, and a one-line status. Implemented by the Agentic Routines panel; called on the EDT.
  */
 public interface TaskOutput {
 

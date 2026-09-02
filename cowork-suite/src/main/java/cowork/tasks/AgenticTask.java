@@ -9,19 +9,14 @@ import java.util.List;
  */
 public interface AgenticTask {
 
-    /** Unique identifier (e.g. "context-refresh"). */
     String getId();
 
-    /** Display name shown in the sidebar. */
     String getName();
 
-    /** Short description for tooltip or subtitle. */
     String getDescription();
 
-    /** Category for sidebar grouping (e.g. "Context", "Reports"). */
     String getCategory();
 
-    /** False when prerequisites are missing. */
     boolean isAvailable();
 
     void execute(AgenticTaskContext ctx);
