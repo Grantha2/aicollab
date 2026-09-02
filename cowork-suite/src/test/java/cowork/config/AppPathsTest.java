@@ -40,8 +40,14 @@ class AppPathsTest {
 
     @Test
     void blankPropertyIsIgnored() {
+        // Do not build a Path from "   " to compare against: a trailing space is
+        // an illegal path character on Windows and Path.of would throw here.
         System.setProperty("cowork.home", "   ");
-        assertTrue(AppPaths.base().isAbsolute());
-        assertNotEquals(Path.of("   ").toAbsolutePath(), AppPaths.base());
+        Path base = AppPaths.base();
+        assertTrue(base.isAbsolute());
+        assertFalse(base.toString().contains("   "));
+        if (System.getenv("COWORK_HOME") == null) {
+            assertEquals(Path.of("").toAbsolutePath(), base);
+        }
     }
 }
