@@ -39,12 +39,29 @@ public class ContextControlDialog extends JDialog {
      * MainGui persists via PromptTemplateLibrary and rebuilds Maestro.
      */
     private final Runnable onTemplateSaved;
+    /**
+     * Append-only log of every request payload sent to an LLM provider.
+     * Nullable so older callers that don't wire auditing still work. When
+     * non-null, the "View Sent Payloads" button opens an ApiRequestViewerDialog
+     * backed by this log.
+     */
+    private final ApiRequestLog apiRequestLog;
 
     public ContextControlDialog(Frame owner, ContextController controller,
                                 ConversationContext context, ProfileSet activeProfileSet,
                                 PromptTemplate activeTemplate,
                                 Runnable onProfileSetSaved, Runnable onEditProfileRequested,
                                 Runnable onTemplateSaved) {
+        this(owner, controller, context, activeProfileSet, activeTemplate,
+                onProfileSetSaved, onEditProfileRequested, onTemplateSaved, null);
+    }
+
+    public ContextControlDialog(Frame owner, ContextController controller,
+                                ConversationContext context, ProfileSet activeProfileSet,
+                                PromptTemplate activeTemplate,
+                                Runnable onProfileSetSaved, Runnable onEditProfileRequested,
+                                Runnable onTemplateSaved,
+                                ApiRequestLog apiRequestLog) {
         super(owner, "Context Control", true);
         this.controller = controller;
         this.context = context;
@@ -53,6 +70,7 @@ public class ContextControlDialog extends JDialog {
         this.onProfileSetSaved = onProfileSetSaved;
         this.onEditProfileRequested = onEditProfileRequested;
         this.onTemplateSaved = onTemplateSaved;
+        this.apiRequestLog = apiRequestLog;
 
         setSize(700, 500);
         setLocationRelativeTo(owner);
@@ -77,12 +95,21 @@ public class ContextControlDialog extends JDialog {
         minBtn.addActionListener(e -> applyPreset(ContextPreset.minimal()));
         JButton noHistBtn = new JButton("No History");
         noHistBtn.addActionListener(e -> applyPreset(ContextPreset.noHistory()));
+        JButton viewPayloadsBtn = new JButton("View Sent Payloads");
+        viewPayloadsBtn.setToolTipText("Open the audit viewer for every LLM request payload "
+                + "sent this session (system instruction, messages, max tokens).");
+        viewPayloadsBtn.addActionListener(e -> {
+            ApiRequestLog log = apiRequestLog != null ? apiRequestLog : new ApiRequestLog();
+            ApiRequestViewerDialog viewer = new ApiRequestViewerDialog(this, log);
+            viewer.setVisible(true);
+        });
         JButton closeBtn = new JButton("Close");
         closeBtn.addActionListener(e -> dispose());
         bottomPanel.add(fullBtn);
         bottomPanel.add(minBtn);
         bottomPanel.add(noHistBtn);
         bottomPanel.add(Box.createHorizontalGlue());
+        bottomPanel.add(viewPayloadsBtn);
         bottomPanel.add(closeBtn);
         add(bottomPanel, BorderLayout.SOUTH);
     }
